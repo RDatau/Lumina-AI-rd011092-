@@ -2948,65 +2948,69 @@ const ChatView: React.FC<ChatViewProps> = ({
             <div className="rounded-[25px] rounded-tl-none p-4 flex flex-col gap-2 shadow-2xl min-w-[160px]" style={glassStyles}>
               {loadingType === 'pap' && (
                 <div className="mb-3 overflow-hidden rounded-2xl border border-white/20 aspect-video bg-black/50 flex items-center justify-center relative shadow-2xl min-w-[220px]">
-                  {/* Background Preview Gambar Slot dengan Opasitas 50% */}
-                  {papSlotPreview?.url && (
-                    <div className="absolute inset-0 overflow-hidden">
-                      <img 
-                        src={papSlotPreview.url} 
-                        className="w-full h-full object-cover opacity-50 transition-all duration-700 scale-105 filter blur-[0.5px]" 
-                        alt="Slot Preview" 
-                      />
-                      <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-black/30 to-black/60" />
-                    </div>
-                  )}
+                  {(() => {
+                    const activePreview = papSlotPreview || allPapSlots[0];
+                    return (
+                      <>
+                        {activePreview?.url && (
+                          <div className="absolute inset-0 overflow-hidden">
+                            <img 
+                              src={activePreview.url} 
+                              className="w-full h-full object-cover opacity-50 transition-all duration-700 scale-105 filter blur-[0.5px]" 
+                              alt="Slot Preview" 
+                            />
+                            <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-black/30 to-black/60" />
+                          </div>
+                        )}
 
-                  <div 
-                    className="absolute inset-0 animate-pulse pointer-events-none"
-                    style={{ background: `radial-gradient(circle at center, ${themeHex}30 0%, transparent 75%)` }}
-                  ></div>
+                        <div 
+                          className="absolute inset-0 animate-pulse pointer-events-none"
+                          style={{ background: `radial-gradient(circle at center, ${themeHex}30 0%, transparent 75%)` }}
+                        ></div>
 
-                  {/* Badge Slot Info di Pojok Atas */}
-                  {papSlotPreview && (
-                    <div className="absolute top-2.5 left-2.5 right-2.5 flex items-center justify-between z-20 pointer-events-none">
-                      <span className="px-2.5 py-1 rounded-full bg-black/75 backdrop-blur-md text-[8px] font-black uppercase tracking-wider text-white border border-white/20 shadow-lg flex items-center gap-1.5 animate-in fade-in zoom-in-95 duration-300">
-                        <span className="w-1.5 h-1.5 rounded-full animate-ping" style={{ backgroundColor: themeHex }} />
-                        {papSlotPreview.label}
-                      </span>
-                      {allPapSlots.length > 1 && (
-                        <div className="flex gap-1 pointer-events-auto">
-                          {allPapSlots.map(s => (
-                            <button 
-                              type="button"
-                              key={s.slot} 
-                              onClick={(e) => { e.stopPropagation(); setPapSlotPreview(s); }}
-                              className={`px-2 py-0.5 rounded text-[7px] font-black uppercase transition-all cursor-pointer ${s.slot === papSlotPreview.slot ? 'bg-white text-black font-extrabold shadow scale-105 ring-1 ring-white/50' : 'bg-black/60 text-white/70 hover:bg-black/80 hover:text-white border border-white/10'}`}
-                              title={s.label}
-                            >
-                              Img {s.slot}
-                            </button>
-                          ))}
+                        {/* Badge Slot Info di Pojok Atas */}
+                        {activePreview && (
+                          <div className="absolute top-2.5 left-2.5 right-2.5 flex items-center justify-between z-20 pointer-events-none">
+                            <span className="px-2.5 py-1 rounded-full bg-black/75 backdrop-blur-md text-[8px] font-black uppercase tracking-wider text-white border border-white/20 shadow-lg flex items-center gap-1.5 animate-in fade-in zoom-in-95 duration-300">
+                              <span className="w-1.5 h-1.5 rounded-full animate-ping" style={{ backgroundColor: themeHex }} />
+                              {activePreview.label}
+                            </span>
+                            {allPapSlots.length > 1 && (
+                              <div className="flex gap-1 pointer-events-auto">
+                                {allPapSlots.map(s => (
+                                  <button 
+                                    type="button"
+                                    key={s.slot} 
+                                    onClick={(e) => { e.stopPropagation(); setPapSlotPreview(s); }}
+                                    className={`px-2 py-0.5 rounded text-[7px] font-black uppercase transition-all cursor-pointer ${s.slot === activePreview.slot ? 'bg-white text-black font-extrabold shadow scale-105 ring-1 ring-white/50' : 'bg-black/60 text-white/70 hover:bg-black/80 hover:text-white border border-white/10'}`}
+                                    title={s.label}
+                                  >
+                                    Img {s.slot}
+                                  </button>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        )}
+
+                        {/* Spinner & Tulisan Generating PAP di Tengah */}
+                        <div className="flex flex-col items-center gap-2 z-10 p-4 text-center">
+                          <div 
+                            className="w-8 h-8 rounded-full border-[3.5px] animate-spin shadow-lg"
+                            style={{ borderColor: `${themeHex}30`, borderTopColor: themeHex }}
+                          ></div>
+                          <span 
+                            className="text-[9px] font-black uppercase tracking-widest drop-shadow-md text-white"
+                          >
+                            Generating PAP...
+                          </span>
+                          <span className="text-[8px] font-bold text-white/90 line-clamp-1 max-w-[220px] drop-shadow mt-0.5 bg-black/40 px-2 py-0.5 rounded-full border border-white/10">
+                            {loadingStatus}
+                          </span>
                         </div>
-                      )}
-                    </div>
-                  )}
-
-                  {/* Spinner & Tulisan Generating PAP di Tengah */}
-                  <div className="flex flex-col items-center gap-2 z-10 p-4 text-center">
-                    <div 
-                      className="w-8 h-8 rounded-full border-[3.5px] animate-spin shadow-lg"
-                      style={{ borderColor: `${themeHex}30`, borderTopColor: themeHex }}
-                    ></div>
-                    <span 
-                      className="text-[9px] font-black uppercase tracking-widest drop-shadow-md text-white"
-                    >
-                      Generating PAP...
-                    </span>
-                    {papSlotPreview && (
-                      <span className="text-[8px] font-bold text-white/90 line-clamp-1 max-w-[220px] drop-shadow mt-0.5 bg-black/40 px-2 py-0.5 rounded-full border border-white/10">
-                        {loadingStatus}
-                      </span>
-                    )}
-                  </div>
+                      </>
+                    );
+                  })()}
                 </div>
               )}
               <div className="flex gap-3 items-center">
