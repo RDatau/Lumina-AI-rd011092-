@@ -131,12 +131,8 @@ const App: React.FC = () => {
         return;
       }
 
-      // Jika user sedang berada di halaman utama (PROFILE_SELECT) dan menekan tombol kembali Android:
+      // Jika user sedang berada di halaman utama (PROFILE_SELECT) dan menekan tombol kembali:
       if (appStateRef.current === AppState.PROFILE_SELECT) {
-        // Biarkan browser / Android PWA keluar aplikasi secara alami atau panggil Capacitor exitApp
-        if (typeof window !== 'undefined' && (window as any).Capacitor?.Plugins?.App?.exitApp) {
-          (window as any).Capacitor.Plugins.App.exitApp();
-        }
         return;
       }
 
