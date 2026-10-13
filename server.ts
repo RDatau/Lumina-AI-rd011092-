@@ -69,6 +69,7 @@ async function startServer() {
       };
 
       if (req.method !== 'GET' && req.method !== 'HEAD') {
+        (fetchOptions as any).duplex = 'half';
         if (Buffer.isBuffer(req.body) && req.body.length > 0) {
           fetchOptions.body = req.body;
         } else if (req.body && typeof req.body === 'object' && Object.keys(req.body).length > 0) {

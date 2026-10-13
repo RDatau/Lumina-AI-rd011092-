@@ -38,8 +38,8 @@ export interface GradioInputComponent {
   defaultValue: any;
 }
 
-export const DEFAULT_QWEN_SPACE_URL = 'https://huggingface.co/spaces/CopoZ/Qwen-Image-Edit-Rapid-AIO-Loras-Plus';
-export const DEFAULT_QWEN_SPACE_HOST = 'https://copoz-qwen-image-edit-rapid-aio-loras-plus.hf.space';
+export const DEFAULT_QWEN_SPACE_URL = 'https://huggingface.co/spaces/aet256/Qwen-Image-Edit-Rapid-AIO-Loras-Experimental';
+export const DEFAULT_QWEN_SPACE_HOST = 'https://aet256-qwen-image-edit-rapid-aio-loras-experimental.hf.space';
 
 // Memory cache untuk tracking token aktif agar rotasi berlanjut antar-request
 let currentTokenIndex = 0;
@@ -61,14 +61,24 @@ export const markTokenExhausted = (token: string) => {
 };
 
 /**
- * Parsing string tokens (pemisah: baris baru, koma, titik koma)
+ * Parsing string Hugging Face Access Tokens (pemisah eksklusif: ENTER/BARIS BARU).
+ * Simbol lain seperti koma, titik koma, spasi, dsb. TIDAK dianggap sebagai pemisah token.
  */
 export const parseHFTokens = (tokensInput?: string): string[] => {
   if (!tokensInput) return [];
-  return tokensInput
-    .split(/[\n,;]+/)
+  const lines = tokensInput
+    .split(/\r\n|\r|\n/)
     .map(t => t.trim())
     .filter(t => t.length > 0);
+
+  // Deduplikasi token agar token yang sama tidak didaftarkan berulang
+  const uniqueTokens: string[] = [];
+  for (const t of lines) {
+    if (!uniqueTokens.includes(t)) {
+      uniqueTokens.push(t);
+    }
+  }
+  return uniqueTokens;
 };
 
 /**
@@ -131,9 +141,12 @@ export const normalizeHFSpaceUrl = async (rawUrl?: string): Promise<string> => {
     const owner = match[1];
     const repo = match[2];
 
-    // Cek special alias cepat
-    if (owner.toLowerCase() === 'copoz' && repo.toLowerCase() === 'qwen-image-edit-rapid-aio-loras-plus') {
-      return 'https://copoz-qwen-image-edit-rapid-aio-loras-plus.hf.space';
+    // Cek special alias cepat atau migrasi link lama yang sudah tidak aktif
+    if (owner.toLowerCase() === 'copoz' && repo.toLowerCase().includes('qwen-image-edit')) {
+      return DEFAULT_QWEN_SPACE_HOST;
+    }
+    if (owner.toLowerCase() === 'aet256' && repo.toLowerCase().includes('qwen-image-edit')) {
+      return 'https://aet256-qwen-image-edit-rapid-aio-loras-experimental.hf.space';
     }
     if (owner.toLowerCase() === 'qwen' && repo.toLowerCase() === 'qwen-image-edit') {
       return 'https://qwen-qwen-image-edit.hf.space';
@@ -260,75 +273,122 @@ export const fetchUrlToDataUrl = async (url: string, token?: string): Promise<st
 };
 
 /**
- * Upload gambar base64 ke Gradio endpoint (/gradio_api/upload untuk Gradio 5/6 atau /upload untuk Gradio 4)
+ * Upload gambar (base64 data URL atau HTTP URL) ke Gradio endpoint (/gradio_api/upload untuk Gradio 5/6 atau /upload untuk Gradio 4)
  */
 const uploadToGradio = async (spaceHost: string, dataUrl: string, token?: string): Promise<any> => {
-  try {
-    const parts = dataUrl.split(',');
-    const mimeMatch = parts[0].match(/:(.*?);/);
-    const mime = mimeMatch ? mimeMatch[1] : 'image/png';
-    const binary = atob(parts[1]);
-    const array = new Uint8Array(binary.length);
-    for (let i = 0; i < binary.length; i++) array[i] = binary.charCodeAt(i);
-    const blob = new Blob([array], { type: mime });
+  if (!dataUrl) {
+    throw new Error("Data gambar kosong atau tidak ditemukan.");
+  }
 
-    const formData = new FormData();
-    formData.append('files', blob, 'input_image.png');
+  try {
+    let blob: Blob;
+    let mime = 'image/png';
+
+    if (dataUrl.startsWith('data:')) {
+      const commaIdx = dataUrl.indexOf(',');
+      if (commaIdx === -1) {
+        throw new Error("Format base64 data URL tidak valid (tanpa koma).");
+      }
+      const header = dataUrl.slice(0, commaIdx);
+      const base64Data = dataUrl.slice(commaIdx + 1);
+      const mimeMatch = header.match(/:(.*?);/);
+      mime = mimeMatch ? mimeMatch[1] : 'image/png';
+
+      const binary = atob(base64Data);
+      const array = new Uint8Array(binary.length);
+      for (let i = 0; i < binary.length; i++) array[i] = binary.charCodeAt(i);
+      blob = new Blob([array], { type: mime });
+    } else if (dataUrl.startsWith('http://') || dataUrl.startsWith('https://')) {
+      // Unduh gambar dari URL via proxyFetch
+      const resp = await proxyFetch(dataUrl);
+      if (!resp.ok) {
+        throw new Error(`Gagal mengunduh gambar referensi dari URL (${resp.status} ${resp.statusText})`);
+      }
+      blob = await resp.blob();
+      mime = blob.type || 'image/png';
+    } else {
+      throw new Error("Format gambar referensi tidak dikenali.");
+    }
 
     const headers: Record<string, string> = {};
     if (token) headers['Authorization'] = `Bearer ${token}`;
 
+    const cleanHost = spaceHost.replace(/\/+$/, '');
     const uploadEndpoints = [
-      `${spaceHost}/gradio_api/upload`,
-      `${spaceHost}/upload`
+      `${cleanHost}/gradio_api/upload`,
+      `${cleanHost}/upload`
     ];
+
+    let lastErrorMsg = '';
 
     for (const ep of uploadEndpoints) {
       try {
-        // Coba upload langsung terlebih dahulu jika didukung oleh browser CORS Space
-        let resp: Response | null = null;
-        try {
-          resp = await fetch(ep, {
-            method: 'POST',
-            headers,
-            body: formData
-          });
-        } catch (directErr) {
-          // Fallback ke proxy
-        }
+        const formData = new FormData();
+        formData.append('files', blob, 'input_image.png');
 
-        if (!resp || !resp.ok) {
-          resp = await proxyFetch(ep, {
-            method: 'POST',
-            headers,
-            body: formData
-          });
-        }
+        const resp = await proxyFetch(ep, {
+          method: 'POST',
+          headers,
+          body: formData
+        });
 
         if (resp && resp.ok) {
           const text = await resp.text();
-          if (text.startsWith('[')) {
-            const data = JSON.parse(text);
-            if (Array.isArray(data) && data.length > 0) {
+          const trimmed = text.trim();
+          let parsed: any = null;
+          try {
+            parsed = JSON.parse(trimmed);
+          } catch (e) {
+            console.warn("[HF-Upload] Response bukan JSON valid:", trimmed.slice(0, 100));
+          }
+
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            const firstItem = parsed[0];
+            if (typeof firstItem === 'string') {
               return {
-                path: data[0],
-                url: `${spaceHost}/gradio_api/file=${data[0]}`,
+                path: firstItem,
+                url: `${cleanHost}/gradio_api/file=${firstItem}`,
                 orig_name: 'input_image.png',
                 size: blob.size,
                 mime_type: mime,
                 meta: { _type: 'gradio.FileData' }
               };
+            } else if (firstItem && typeof firstItem === 'object') {
+              return {
+                path: firstItem.path || firstItem.name || '',
+                url: firstItem.url || (firstItem.path ? `${cleanHost}/gradio_api/file=${firstItem.path}` : ''),
+                orig_name: firstItem.orig_name || 'input_image.png',
+                size: firstItem.size || blob.size,
+                mime_type: firstItem.mime_type || mime,
+                meta: firstItem.meta || { _type: 'gradio.FileData' }
+              };
             }
+          } else if (parsed && typeof parsed === 'object' && Array.isArray(parsed.files) && parsed.files.length > 0) {
+            const fileItem = parsed.files[0];
+            const filePath = typeof fileItem === 'string' ? fileItem : (fileItem.path || '');
+            return {
+              path: filePath,
+              url: `${cleanHost}/gradio_api/file=${filePath}`,
+              orig_name: 'input_image.png',
+              size: blob.size,
+              mime_type: mime,
+              meta: { _type: 'gradio.FileData' }
+            };
           }
+        } else if (resp) {
+          const errText = await resp.text().catch(() => '');
+          lastErrorMsg = `HTTP ${resp.status} ${resp.statusText}${errText ? `: ${errText.slice(0, 150)}` : ''}`;
         }
-      } catch (err) {}
+      } catch (epErr: any) {
+        lastErrorMsg = epErr?.message || String(epErr);
+      }
     }
-  } catch (err) {
-    console.warn("[HF-Upload] Upload error:", err);
-  }
 
-  // Jika Space menolak upload, lempar error jelas alih-alih dataUrl mentah yang ditolak Gradio modern
-  throw new Error("Gagal mengunggah foto referensi ke server Hugging Face Space. Pastikan URL Space aktif dan dapat diakses.");
+    throw new Error(`Gagal mengunggah foto ke Space (${cleanHost}): ${lastErrorMsg || 'Endpoint upload menolak koneksi'}`);
+  } catch (err: any) {
+    console.error("[HF-Upload] Upload error:", err);
+    throw err;
+  }
 };
 
 /**
@@ -572,10 +632,24 @@ const callGradioLegacy = async (
  */
 const isQuotaOrLimitError = (err: any): boolean => {
   if (!err) return false;
-  const status = err.status || err.statusCode;
-  if (status === 429 || status === 401 || status === 403 || status === 503 || status === 504 || status === 502) return true;
-
   const msg = (err.message || err.raw || String(err)).toLowerCase();
+
+  // Pastikan BUKAN error upload, 404, atau Space yang sedang sleeping
+  if (
+    msg.includes('mengunggah') || 
+    msg.includes('upload') || 
+    msg.includes('404') || 
+    msg.includes('not found') || 
+    msg.includes('sleeping') ||
+    msg.includes('halaman html') ||
+    msg.includes('tidak ditemukan')
+  ) {
+    return false;
+  }
+
+  const status = err.status || err.statusCode;
+  if (status === 429) return true;
+
   return (
     msg.includes('quota') ||
     msg.includes('kuota') ||
@@ -583,21 +657,11 @@ const isQuotaOrLimitError = (err: any): boolean => {
     msg.includes('rate limit') ||
     msg.includes('too many requests') ||
     msg.includes('exhausted') ||
-    msg.includes('credit') ||
-    msg.includes('unauthorized') ||
     msg.includes('gpu limit') ||
     msg.includes('gpu quota') ||
-    msg.includes('zerogpu') ||
-    msg.includes('antrean gpu') ||
-    msg.includes('gpu') ||
-    msg.includes('stream') ||
-    msg.includes('space execution error') ||
-    msg.includes('busy') ||
-    msg.includes('timeout') ||
-    msg.includes('try again') ||
-    msg.includes('429') ||
-    msg.includes('503') ||
-    msg.includes('504')
+    msg.includes('zerogpu quota') ||
+    msg.includes('zero-gpu quota') ||
+    msg.includes('429')
   );
 };
 
@@ -817,6 +881,8 @@ export const generateWithHuggingFaceSpace = async (
 
     onStatusUpdate?.(`Menghubungkan ke Space ZeroGPU ${tokenDisplay}...`);
 
+    let payloadData: any[] = [];
+
     try {
       // Format gambar untuk Gradio menggunakan token aktif saat ini
       onStatusUpdate?.("Mempersiapkan gambar karakter (Image 1: Base/Target)...", { slot: 1, label: "Image 1: Base (Identitas Karakter)", url: inputImage });
@@ -855,7 +921,7 @@ export const generateWithHuggingFaceSpace = async (
       }
 
       // Bangun payload data dinamis berdasarkan skema komponen Space
-      let payloadData: any[] = [];
+      payloadData = [];
 
       if (inputComponents.length > 0) {
         let imageInputCount = 0;
@@ -927,8 +993,14 @@ export const generateWithHuggingFaceSpace = async (
       const errMsg = err?.message || String(err);
       console.warn(`[HF-ZeroGPU] Percobaan ${attempts} (Akun #${currentTokenIndex + 1}) gagal:`, errMsg);
 
-      // JIKA MASIH ADA TOKEN CADANGAN (attempts < maxAttempts):
-      // SELALU rotasikan ke token berikutnya dan coba lagi! Jangan pernah menyerah jika ada akun cadangan.
+      // Jika error bukan karena token/kuota (misal: Space 404, sleeping, atau upload gagal),
+      // jangan habiskan 66 token berulang kali untuk Space yang sedang offline/rusak.
+      if (errMsg.includes('mengunggah') || errMsg.includes('sleeping') || errMsg.includes('tidak ditemukan') || errMsg.includes('404')) {
+        break;
+      }
+
+      // JIKA MASIH ADA TOKEN CADANGAN (attempts < maxAttempts) dan error mungkin terkait limit token:
+      // Rotasikan ke token berikutnya dan coba lagi.
       if (tokens.length > 1 && attempts < maxAttempts) {
         rotateToken(tokens, onStatusUpdate);
         continue;
@@ -949,8 +1021,8 @@ export const generateWithHuggingFaceSpace = async (
   }
 
   const errDetail = lastError?.message || String(lastError);
-  if (isQuotaOrLimitError(lastError) || tokens.length > 0) {
-    throw new Error(`Semua kuota ZeroGPU akun Hugging Face Anda telah habis (${tokens.length} akun dicek). Silakan ganti atau tambahkan token akun lain di Pengaturan.`);
+  if (isQuotaOrLimitError(lastError)) {
+    throw new Error(`Semua kuota ZeroGPU akun Hugging Face Anda telah habis (${tokens.length > 0 ? `${tokens.length} akun dicek` : 'mode publik'}). Silakan ganti atau tambahkan token akun lain di Pengaturan.`);
   }
 
   throw new Error(`Gagal memproses gambar di Hugging Face Space: ${errDetail}`);
@@ -976,6 +1048,8 @@ export const testHuggingFaceSpace = async (
     let hardware = "ZeroGPU / CPU";
     let spaceName = spaceHost.replace('https://', '').replace('.hf.space', '');
 
+    let isConnected = false;
+
     try {
       const configResp = await proxyFetch(`${spaceHost}/config`, { headers });
       if (configResp.ok) {
@@ -983,12 +1057,19 @@ export const testHuggingFaceSpace = async (
         if (text.startsWith('{')) {
           const cfg = JSON.parse(text);
           spaceStage = "RUNNING";
+          isConnected = true;
           if (cfg?.title) spaceName = cfg.title;
         }
       } else if (configResp.status === 401 || configResp.status === 403) {
         return {
           success: false,
           message: `Space ini bersifat Private atau memerlukan Token yang valid (HTTP ${configResp.status}).`,
+          activeTokenCount: tokens.length
+        };
+      } else if (configResp.status === 404) {
+        return {
+          success: false,
+          message: `Space tidak ditemukan di ${spaceHost} (HTTP 404 Not Found). Space mungkin telah dihapus atau URL tidak aktif.`,
           activeTokenCount: tokens.length
         };
       }
@@ -998,14 +1079,6 @@ export const testHuggingFaceSpace = async (
     const hfMatch = (rawUrl || '').match(/huggingface\.co\/spaces\/([^\/]+)\/([^\/]+)/i);
     let targetOwner = hfMatch ? hfMatch[1] : '';
     let targetRepo = hfMatch ? hfMatch[2] : '';
-
-    if (!targetOwner && spaceHost.includes('copoz-qwen-image-edit')) {
-      targetOwner = 'CopoZ';
-      targetRepo = 'Qwen-Image-Edit-Rapid-AIO-Loras-Plus';
-    } else if (!targetOwner && spaceHost.includes('qwen-qwen-image-edit')) {
-      targetOwner = 'Qwen';
-      targetRepo = 'Qwen-Image-Edit';
-    }
 
     if (targetOwner && targetRepo) {
       try {
@@ -1017,9 +1090,24 @@ export const testHuggingFaceSpace = async (
             spaceStage = apiData?.runtime?.stage || spaceStage;
             hardware = apiData?.runtime?.hardware?.current || hardware;
             spaceName = apiData?.id || spaceName;
+            isConnected = true;
           }
+        } else if (apiResp.status === 404 || apiResp.status === 401) {
+          return {
+            success: false,
+            message: `Space "${targetOwner}/${targetRepo}" tidak dapat diakses di Hugging Face (HTTP ${apiResp.status}).`,
+            activeTokenCount: tokens.length
+          };
         }
       } catch (e) {}
+    }
+
+    if (!isConnected && spaceStage === "UNKNOWN") {
+      return {
+        success: false,
+        message: `Gagal menghubungi Space (${spaceHost}). Pastikan URL Space benar, aktif, dan dapat diakses.`,
+        activeTokenCount: tokens.length
+      };
     }
 
     const activePreview = testToken ? `${testToken.slice(0, 6)}...${testToken.slice(-4)}` : 'Tanpa Token';

@@ -236,14 +236,24 @@ const getFallbackTitle = (text: string): string => {
 };
 
 /**
- * Parsing string Gemini API keys (pemisah: baris baru, koma, titik koma)
+ * Parsing string Gemini API keys (pemisah eksklusif: ENTER/BARIS BARU).
+ * Simbol lain seperti koma, titik koma, spasi, dsb. TIDAK dianggap sebagai pemisah key.
  */
 export const parseGeminiApiKeys = (input?: string): string[] => {
   if (!input) return [];
-  return input
-    .split(/[\n,;\t\s]+/)
+  const lines = input
+    .split(/\r\n|\r|\n/)
     .map(k => k.trim())
-    .filter(k => k.length > 10);
+    .filter(k => k.length > 0);
+
+  // Deduplikasi agar key yang sama tidak didaftarkan berulang
+  const uniqueKeys: string[] = [];
+  for (const k of lines) {
+    if (!uniqueKeys.includes(k)) {
+      uniqueKeys.push(k);
+    }
+  }
+  return uniqueKeys;
 };
 
 export const getAllGeminiApiKeys = (userProfile?: UserProfile): string[] => {
