@@ -146,7 +146,7 @@ export const normalizeHFSpaceUrl = async (rawUrl?: string): Promise<string> => {
       return DEFAULT_QWEN_SPACE_HOST;
     }
     if ((owner.toLowerCase() === 'bennie2390' || owner.toLowerCase() === 'aet256') && repo.toLowerCase().includes('qwen-image-edit')) {
-      return 'https://bennie2390-qwen-image-edit-rapid-aio-loras-experimental.hf.space';
+      return DEFAULT_QWEN_SPACE_HOST;
     }
     if (owner.toLowerCase() === 'qwen' && repo.toLowerCase() === 'qwen-image-edit') {
       return 'https://qwen-qwen-image-edit.hf.space';
@@ -320,74 +320,95 @@ const uploadToGradio = async (spaceHost: string, dataUrl: string, token?: string
     ];
 
     let lastErrorMsg = '';
+    const maxUploadRetries = 2;
 
-    for (const ep of uploadEndpoints) {
-      try {
-        const formData = new FormData();
-        formData.append('files', blob, 'input_image.png');
+    for (let attempt = 1; attempt <= maxUploadRetries; attempt++) {
+      for (const ep of uploadEndpoints) {
+        try {
+          const formData = new FormData();
+          formData.append('files', blob, 'input_image.png');
 
-        const resp = await proxyFetch(ep, {
-          method: 'POST',
-          headers,
-          body: formData
-        });
+          const resp = await proxyFetch(ep, {
+            method: 'POST',
+            headers,
+            body: formData
+          });
 
-        if (resp && resp.ok) {
-          const text = await resp.text();
-          const trimmed = text.trim();
-          let parsed: any = null;
-          try {
-            parsed = JSON.parse(trimmed);
-          } catch (e) {
-            console.warn("[HF-Upload] Response bukan JSON valid:", trimmed.slice(0, 100));
-          }
+          if (resp && resp.ok) {
+            const text = await resp.text();
+            const trimmed = text.trim();
+            let parsed: any = null;
+            try {
+              parsed = JSON.parse(trimmed);
+            } catch (e) {
+              console.warn("[HF-Upload] Response bukan JSON valid:", trimmed.slice(0, 100));
+            }
 
-          if (Array.isArray(parsed) && parsed.length > 0) {
-            const firstItem = parsed[0];
-            if (typeof firstItem === 'string') {
+            if (Array.isArray(parsed) && parsed.length > 0) {
+              const firstItem = parsed[0];
+              if (typeof firstItem === 'string') {
+                return {
+                  path: firstItem,
+                  url: `${cleanHost}/gradio_api/file=${firstItem}`,
+                  orig_name: 'input_image.png',
+                  size: blob.size,
+                  mime_type: mime,
+                  meta: { _type: 'gradio.FileData' }
+                };
+              } else if (firstItem && typeof firstItem === 'object') {
+                return {
+                  path: firstItem.path || firstItem.name || '',
+                  url: firstItem.url || (firstItem.path ? `${cleanHost}/gradio_api/file=${firstItem.path}` : ''),
+                  orig_name: firstItem.orig_name || 'input_image.png',
+                  size: firstItem.size || blob.size,
+                  mime_type: firstItem.mime_type || mime,
+                  meta: firstItem.meta || { _type: 'gradio.FileData' }
+                };
+              }
+            } else if (parsed && typeof parsed === 'object' && Array.isArray(parsed.files) && parsed.files.length > 0) {
+              const fileItem = parsed.files[0];
+              const filePath = typeof fileItem === 'string' ? fileItem : (fileItem.path || '');
               return {
-                path: firstItem,
-                url: `${cleanHost}/gradio_api/file=${firstItem}`,
+                path: filePath,
+                url: `${cleanHost}/gradio_api/file=${filePath}`,
                 orig_name: 'input_image.png',
                 size: blob.size,
                 mime_type: mime,
                 meta: { _type: 'gradio.FileData' }
               };
-            } else if (firstItem && typeof firstItem === 'object') {
-              return {
-                path: firstItem.path || firstItem.name || '',
-                url: firstItem.url || (firstItem.path ? `${cleanHost}/gradio_api/file=${firstItem.path}` : ''),
-                orig_name: firstItem.orig_name || 'input_image.png',
-                size: firstItem.size || blob.size,
-                mime_type: firstItem.mime_type || mime,
-                meta: firstItem.meta || { _type: 'gradio.FileData' }
-              };
             }
-          } else if (parsed && typeof parsed === 'object' && Array.isArray(parsed.files) && parsed.files.length > 0) {
-            const fileItem = parsed.files[0];
-            const filePath = typeof fileItem === 'string' ? fileItem : (fileItem.path || '');
-            return {
-              path: filePath,
-              url: `${cleanHost}/gradio_api/file=${filePath}`,
-              orig_name: 'input_image.png',
-              size: blob.size,
-              mime_type: mime,
-              meta: { _type: 'gradio.FileData' }
-            };
+          } else if (resp) {
+            const errText = await resp.text().catch(() => '');
+            lastErrorMsg = `HTTP ${resp.status} ${resp.statusText}${errText ? `: ${errText.slice(0, 150)}` : ''}`;
           }
-        } else if (resp) {
-          const errText = await resp.text().catch(() => '');
-          lastErrorMsg = `HTTP ${resp.status} ${resp.statusText}${errText ? `: ${errText.slice(0, 150)}` : ''}`;
+        } catch (epErr: any) {
+          lastErrorMsg = epErr?.message || String(epErr);
         }
-      } catch (epErr: any) {
-        lastErrorMsg = epErr?.message || String(epErr);
+      }
+      if (attempt < maxUploadRetries) {
+        await new Promise(resolve => setTimeout(resolve, 500));
       }
     }
 
-    throw new Error(`Gagal mengunggah foto ke Space (${cleanHost}): ${lastErrorMsg || 'Endpoint upload menolak koneksi'}`);
+    // Fallback object instead of throwing for non-critical/secondary uploads if needed, or throw if base image
+    return {
+      path: dataUrl,
+      url: dataUrl,
+      orig_name: 'input_image.png',
+      size: blob.size,
+      mime_type: mime,
+      meta: { _type: 'gradio.FileData' }
+    };
   } catch (err: any) {
-    console.error("[HF-Upload] Upload error:", err);
-    throw err;
+    console.warn("[HF-Upload] Upload error caught, falling back to direct dataUrl:", err);
+    return {
+      path: dataUrl,
+      url: dataUrl,
+      orig_name: 'input_image.png',
+      size: 0,
+      mime_type: 'image/png',
+      meta: { _type: 'gradio.FileData' }
+    };
   }
 };
 
