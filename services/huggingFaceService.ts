@@ -941,51 +941,28 @@ export const generateWithHuggingFaceSpace = async (
         onStatusUpdate?.("Seluruh referensi gambar terunggah. Menghubungkan ke Space ZeroGPU...");
       }
 
-      // Bangun payload data dinamis berdasarkan skema komponen Space
-      payloadData = [];
-
-      if (inputComponents.length > 0) {
-        let imageInputCount = 0;
-
-        for (const comp of inputComponents) {
-          const type = (comp.type || '').toLowerCase();
-          const label = (comp.label || '').toLowerCase();
-
-          if (type === 'textbox' || label.includes('prompt')) {
-            if (label.includes('negative') || label.includes('neg_prompt') || label.includes('neg prompt')) {
-              payloadData.push("");
-            } else {
-              payloadData.push(effectivePrompt);
-            }
-          } else if (type === 'image' || label.includes('image')) {
-            imageInputCount++;
-            if (imageInputCount === 1) {
-              payloadData.push(formattedImage || null);
-            } else if (imageInputCount === 2) {
-              payloadData.push(formattedExtraRef || null);
-            } else {
-              payloadData.push(null);
-            }
-          } else if (type === 'gallery' || label.includes('additional')) {
-            payloadData.push(formattedGallery);
-          } else if (comp.defaultValue !== undefined && comp.defaultValue !== null) {
-            payloadData.push(comp.defaultValue);
-          } else if (type === 'slider') {
-            if (label.includes('identity lock')) payloadData.push(shouldInjectAnatomy ? 65 : 0);
-            else payloadData.push(0);
-          } else if (type === 'checkbox') {
-            if (label.includes('identity') || label.includes('face') || label.includes('hands') || label.includes('anatomy')) {
-              payloadData.push(shouldInjectAnatomy);
-            } else {
-              payloadData.push(false);
-            }
-          } else {
-            payloadData.push(null);
-          }
-        }
-      } else {
-        payloadData = formattedImage ? [formattedImage, effectivePrompt] : [effectivePrompt];
-      }
+      // Konstruksi payload data 19 parameter persis sesuai fungsi infer(app.py)
+      payloadData = [
+        formattedImage || null,                 // 1. input_image_1
+        formattedExtraRef || null,              // 2. input_image_2
+        formattedGallery || [],                 // 3. input_images_extra (Gallery)
+        effectivePrompt,                        // 4. prompt
+        "None",                                 // 5. lora_adapter
+        0,                                      // 6. seed
+        true,                                   // 7. randomize_seed
+        1.0,                                    // 8. guidance_scale
+        4,                                      // 9. steps
+        1.0,                                    // 10. target_megapixels
+        true,                                   // 11. extras_condition_only
+        true,                                   // 12. pad_to_canvas
+        false,                                  // 13. vae_tiling
+        32,                                     // 14. resolution_multiple
+        0.0,                                    // 15. vae_ref_megapixels
+        "qwen",                                 // 16. decoder_vae
+        false,                                  // 17. keep_decoder_2x
+        true,                                   // 18. highlight_protection
+        0.35                                    // 19. highlight_protection_strength
+      ];
 
       let rawResult: any;
       try {
