@@ -930,7 +930,9 @@ export const generateWithHuggingFaceSpace = async (
           try {
             onStatusUpdate?.(`Mempersiapkan referensi tambahan (Image ${slotNum})...`, { slot: slotNum, label: `Image ${slotNum}: Ruangan & PAP Sebelumnya`, url: addImg });
             const up = await uploadToGradio(spaceHost, addImg, tokenToUse);
-            if (up) formattedGallery.push(up);
+            if (up) {
+              formattedGallery.push({ image: up, caption: "" });
+            }
           } catch (e) {
             console.warn("[HF-ZeroGPU] Gagal mengunggah gallery reference image:", e);
           }
