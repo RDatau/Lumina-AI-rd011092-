@@ -38,8 +38,8 @@ export interface GradioInputComponent {
   defaultValue: any;
 }
 
-export const DEFAULT_QWEN_SPACE_URL = 'https://huggingface.co/spaces/aet256/Qwen-Image-Edit-Rapid-AIO-Loras-Experimental';
-export const DEFAULT_QWEN_SPACE_HOST = 'https://aet256-qwen-image-edit-rapid-aio-loras-experimental.hf.space';
+export const DEFAULT_QWEN_SPACE_URL = 'https://huggingface.co/spaces/bennie2390/Qwen-Image-Edit-Rapid-AIO-Loras-Experimental';
+export const DEFAULT_QWEN_SPACE_HOST = 'https://bennie2390-qwen-image-edit-rapid-aio-loras-experimental.hf.space';
 
 // Memory cache untuk tracking token aktif agar rotasi berlanjut antar-request
 let currentTokenIndex = 0;
@@ -145,8 +145,8 @@ export const normalizeHFSpaceUrl = async (rawUrl?: string): Promise<string> => {
     if (owner.toLowerCase() === 'copoz' && repo.toLowerCase().includes('qwen-image-edit')) {
       return DEFAULT_QWEN_SPACE_HOST;
     }
-    if (owner.toLowerCase() === 'aet256' && repo.toLowerCase().includes('qwen-image-edit')) {
-      return 'https://aet256-qwen-image-edit-rapid-aio-loras-experimental.hf.space';
+    if ((owner.toLowerCase() === 'bennie2390' || owner.toLowerCase() === 'aet256') && repo.toLowerCase().includes('qwen-image-edit')) {
+      return 'https://bennie2390-qwen-image-edit-rapid-aio-loras-experimental.hf.space';
     }
     if (owner.toLowerCase() === 'qwen' && repo.toLowerCase() === 'qwen-image-edit') {
       return 'https://qwen-qwen-image-edit.hf.space';

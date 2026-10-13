@@ -1,6 +1,6 @@
 import { AgentConfig, ChatMessage, ChatSession, CallHistory, UserProfile, GlobalAppearance, GlobalGeminiSettings } from '../types';
 
-export const DEFAULT_QWEN_SPACE_URL = 'https://huggingface.co/spaces/aet256/Qwen-Image-Edit-Rapid-AIO-Loras-Experimental';
+export const DEFAULT_QWEN_SPACE_URL = 'https://huggingface.co/spaces/bennie2390/Qwen-Image-Edit-Rapid-AIO-Loras-Experimental';
 
 export const DEFAULT_GLOBAL_GEMINI_SETTINGS: GlobalGeminiSettings = {
   geminiApiKey: '',
@@ -55,7 +55,7 @@ export const getEffectiveGlobalGeminiSettings = (dbSettings?: Partial<GlobalGemi
     useGoogleSearch: local.useGoogleSearch ?? dbSettings?.useGoogleSearch ?? DEFAULT_GLOBAL_GEMINI_SETTINGS.useGoogleSearch,
     hfSpaceUrl: (() => {
       const raw = (local.hfSpaceUrl ?? dbSettings?.hfSpaceUrl ?? '').trim();
-      return (!raw || raw === 'https' || raw === 'https://' || raw === 'http' || raw === 'http://' || raw.toLowerCase().includes('copoz'))
+      return (!raw || raw === 'https' || raw === 'https://' || raw === 'http' || raw === 'http://' || raw.toLowerCase().includes('copoz') || raw.toLowerCase().includes('aet256'))
         ? DEFAULT_QWEN_SPACE_URL
         : raw;
     })(),

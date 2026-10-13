@@ -1076,7 +1076,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
                                   <button
                                     type="button"
                                     onClick={() => updateGlobalGemini({ 
-                                      hfSpaceUrl: 'https://huggingface.co/spaces/aet256/Qwen-Image-Edit-Rapid-AIO-Loras-Experimental',
+                                      hfSpaceUrl: 'https://huggingface.co/spaces/bennie2390/Qwen-Image-Edit-Rapid-AIO-Loras-Experimental',
                                       hfApiEndpoint: '/infer'
                                     })}
                                     className={`text-[8px] font-black uppercase tracking-wider px-2 py-0.5 rounded-md border border-amber-500/40 bg-amber-500/20 text-amber-300 hover:bg-amber-500/30 transition-all`}
@@ -1102,8 +1102,8 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
                                 className={`w-full p-2 text-xs font-mono rounded-xl border ${
                                   !userProfile.hfSpaceUrl ? 'border-amber-500/50' : dynamicBorderColor
                                 } ${isBackgroundDark ? 'bg-black/20 text-white' : 'bg-white/60 text-black'} outline-none focus:border-amber-400/60 transition-all`}
-                                placeholder="https://huggingface.co/spaces/aet256/Qwen-Image-Edit-Rapid-AIO-Loras-Experimental"
-                                value={userProfile.hfSpaceUrl ?? 'https://huggingface.co/spaces/aet256/Qwen-Image-Edit-Rapid-AIO-Loras-Experimental'}
+                                placeholder="https://huggingface.co/spaces/bennie2390/Qwen-Image-Edit-Rapid-AIO-Loras-Experimental"
+                                value={userProfile.hfSpaceUrl ?? 'https://huggingface.co/spaces/bennie2390/Qwen-Image-Edit-Rapid-AIO-Loras-Experimental'}
                                 onChange={(e) => updateGlobalGemini({ hfSpaceUrl: e.target.value })}
                               />
                               <p className={`text-[8px] ${dynamicMutedTextColor} leading-relaxed`}>
