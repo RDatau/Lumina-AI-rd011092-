@@ -879,6 +879,13 @@ const retryOperation = async (
                            errorMsg.includes('not valid') || 
                            error.status === 400 || 
                            error.status === 403;
+      const isNetworkOrTimeout = errorMsg.includes('fetch failed') ||
+                                 errorMsg.includes('network') ||
+                                 errorMsg.includes('timeout') ||
+                                 errorMsg.includes('abort') ||
+                                 errorMsg.includes('connection') ||
+                                 errorMsg.includes('econnreset') ||
+                                 errorMsg.includes('socket');
 
       if ((isQuotaError || isKeyInvalid) && allKeys.length > 1 && i < totalAttempts - 1) {
         markGeminiKeyExhausted(activeKey);
@@ -888,10 +895,10 @@ const retryOperation = async (
         continue;
       }
 
-      if (isQuotaError && allKeys.length <= 1 && i < maxRetries) {
-        // Exponential backoff jika hanya ada 1 key
+      if ((isQuotaError || isNetworkOrTimeout) && i < maxRetries) {
+        // Exponential backoff untuk quota atau network/timeout error
         const delay = Math.pow(2, i + 1) * 1000;
-        console.warn(`[Gemini] Quota hit (429). Retrying in ${delay/1000}s... (Attempt ${i + 1}/${maxRetries})`);
+        console.warn(`[Gemini] ${isNetworkOrTimeout ? 'Network/Timeout' : 'Quota hit'}. Retrying in ${delay/1000}s... (Attempt ${i + 1}/${maxRetries})`);
         await new Promise(resolve => setTimeout(resolve, delay));
         continue;
       }
@@ -1257,7 +1264,7 @@ export const generateAgentResponse = async (
           systemInstruction: createSystemInstruction(effectiveConfig, effectiveUserProfile, 'CHAT', history), 
           temperature: 1.0, 
           topP: 0.98,
-          thinkingConfig: { thinkingLevel: ThinkingLevel.HIGH },
+          thinkingConfig: { thinkingLevel: ThinkingLevel.LOW },
           safetySettings: safetySettings as any,
           tools: tools.length > 0 ? tools : undefined
         }
@@ -1279,7 +1286,7 @@ export const generateAgentResponse = async (
             systemInstruction: createSystemInstruction(effectiveConfig, effectiveUserProfile, 'CHAT', history), 
             temperature: 1.0, 
             topP: 0.98,
-            thinkingConfig: { thinkingLevel: ThinkingLevel.HIGH },
+            thinkingConfig: { thinkingLevel: ThinkingLevel.LOW },
             safetySettings: safetySettings as any
           }
         });
