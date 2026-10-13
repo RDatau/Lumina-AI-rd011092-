@@ -146,7 +146,7 @@ export const normalizeHFSpaceUrl = async (rawUrl?: string): Promise<string> => {
       return DEFAULT_QWEN_SPACE_HOST;
     }
     if ((owner.toLowerCase() === 'bennie2390' || owner.toLowerCase() === 'aet256') && repo.toLowerCase().includes('qwen-image-edit')) {
-      return DEFAULT_QWEN_SPACE_HOST;
+      return 'https://bennie2390-qwen-image-edit-rapid-aio-loras-experimental.hf.space';
     }
     if (owner.toLowerCase() === 'qwen' && repo.toLowerCase() === 'qwen-image-edit') {
       return 'https://qwen-qwen-image-edit.hf.space';
@@ -320,95 +320,74 @@ const uploadToGradio = async (spaceHost: string, dataUrl: string, token?: string
     ];
 
     let lastErrorMsg = '';
-    const maxUploadRetries = 2;
 
-    for (let attempt = 1; attempt <= maxUploadRetries; attempt++) {
-      for (const ep of uploadEndpoints) {
-        try {
-          const formData = new FormData();
-          formData.append('files', blob, 'input_image.png');
+    for (const ep of uploadEndpoints) {
+      try {
+        const formData = new FormData();
+        formData.append('files', blob, 'input_image.png');
 
-          const resp = await proxyFetch(ep, {
-            method: 'POST',
-            headers,
-            body: formData
-          });
+        const resp = await proxyFetch(ep, {
+          method: 'POST',
+          headers,
+          body: formData
+        });
 
-          if (resp && resp.ok) {
-            const text = await resp.text();
-            const trimmed = text.trim();
-            let parsed: any = null;
-            try {
-              parsed = JSON.parse(trimmed);
-            } catch (e) {
-              console.warn("[HF-Upload] Response bukan JSON valid:", trimmed.slice(0, 100));
-            }
+        if (resp && resp.ok) {
+          const text = await resp.text();
+          const trimmed = text.trim();
+          let parsed: any = null;
+          try {
+            parsed = JSON.parse(trimmed);
+          } catch (e) {
+            console.warn("[HF-Upload] Response bukan JSON valid:", trimmed.slice(0, 100));
+          }
 
-            if (Array.isArray(parsed) && parsed.length > 0) {
-              const firstItem = parsed[0];
-              if (typeof firstItem === 'string') {
-                return {
-                  path: firstItem,
-                  url: `${cleanHost}/gradio_api/file=${firstItem}`,
-                  orig_name: 'input_image.png',
-                  size: blob.size,
-                  mime_type: mime,
-                  meta: { _type: 'gradio.FileData' }
-                };
-              } else if (firstItem && typeof firstItem === 'object') {
-                return {
-                  path: firstItem.path || firstItem.name || '',
-                  url: firstItem.url || (firstItem.path ? `${cleanHost}/gradio_api/file=${firstItem.path}` : ''),
-                  orig_name: firstItem.orig_name || 'input_image.png',
-                  size: firstItem.size || blob.size,
-                  mime_type: firstItem.mime_type || mime,
-                  meta: firstItem.meta || { _type: 'gradio.FileData' }
-                };
-              }
-            } else if (parsed && typeof parsed === 'object' && Array.isArray(parsed.files) && parsed.files.length > 0) {
-              const fileItem = parsed.files[0];
-              const filePath = typeof fileItem === 'string' ? fileItem : (fileItem.path || '');
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            const firstItem = parsed[0];
+            if (typeof firstItem === 'string') {
               return {
-                path: filePath,
-                url: `${cleanHost}/gradio_api/file=${filePath}`,
+                path: firstItem,
+                url: `${cleanHost}/gradio_api/file=${firstItem}`,
                 orig_name: 'input_image.png',
                 size: blob.size,
                 mime_type: mime,
                 meta: { _type: 'gradio.FileData' }
               };
+            } else if (firstItem && typeof firstItem === 'object') {
+              return {
+                path: firstItem.path || firstItem.name || '',
+                url: firstItem.url || (firstItem.path ? `${cleanHost}/gradio_api/file=${firstItem.path}` : ''),
+                orig_name: firstItem.orig_name || 'input_image.png',
+                size: firstItem.size || blob.size,
+                mime_type: firstItem.mime_type || mime,
+                meta: firstItem.meta || { _type: 'gradio.FileData' }
+              };
             }
-          } else if (resp) {
-            const errText = await resp.text().catch(() => '');
-            lastErrorMsg = `HTTP ${resp.status} ${resp.statusText}${errText ? `: ${errText.slice(0, 150)}` : ''}`;
+          } else if (parsed && typeof parsed === 'object' && Array.isArray(parsed.files) && parsed.files.length > 0) {
+            const fileItem = parsed.files[0];
+            const filePath = typeof fileItem === 'string' ? fileItem : (fileItem.path || '');
+            return {
+              path: filePath,
+              url: `${cleanHost}/gradio_api/file=${filePath}`,
+              orig_name: 'input_image.png',
+              size: blob.size,
+              mime_type: mime,
+              meta: { _type: 'gradio.FileData' }
+            };
           }
-        } catch (epErr: any) {
-          lastErrorMsg = epErr?.message || String(epErr);
+        } else if (resp) {
+          const errText = await resp.text().catch(() => '');
+          lastErrorMsg = `HTTP ${resp.status} ${resp.statusText}${errText ? `: ${errText.slice(0, 150)}` : ''}`;
         }
-      }
-      if (attempt < maxUploadRetries) {
-        await new Promise(resolve => setTimeout(resolve, 500));
+      } catch (epErr: any) {
+        lastErrorMsg = epErr?.message || String(epErr);
       }
     }
 
-    // Fallback object instead of throwing for non-critical/secondary uploads if needed, or throw if base image
-    return {
-      path: dataUrl,
-      url: dataUrl,
-      orig_name: 'input_image.png',
-      size: blob.size,
-      mime_type: mime,
-      meta: { _type: 'gradio.FileData' }
-    };
+    throw new Error(`Gagal mengunggah foto ke Space (${cleanHost}): ${lastErrorMsg || 'Endpoint upload menolak koneksi'}`);
   } catch (err: any) {
-    console.warn("[HF-Upload] Upload error caught, falling back to direct dataUrl:", err);
-    return {
-      path: dataUrl,
-      url: dataUrl,
-      orig_name: 'input_image.png',
-      size: 0,
-      mime_type: 'image/png',
-      meta: { _type: 'gradio.FileData' }
-    };
+    console.error("[HF-Upload] Upload error:", err);
+    throw err;
   }
 };
 
@@ -930,9 +909,7 @@ export const generateWithHuggingFaceSpace = async (
           try {
             onStatusUpdate?.(`Mempersiapkan referensi tambahan (Image ${slotNum})...`, { slot: slotNum, label: `Image ${slotNum}: Ruangan & PAP Sebelumnya`, url: addImg });
             const up = await uploadToGradio(spaceHost, addImg, tokenToUse);
-            if (up) {
-              formattedGallery.push({ image: up, caption: "" });
-            }
+            if (up) formattedGallery.push(up);
           } catch (e) {
             console.warn("[HF-ZeroGPU] Gagal mengunggah gallery reference image:", e);
           }
@@ -943,28 +920,51 @@ export const generateWithHuggingFaceSpace = async (
         onStatusUpdate?.("Seluruh referensi gambar terunggah. Menghubungkan ke Space ZeroGPU...");
       }
 
-      // Konstruksi payload data 19 parameter persis sesuai fungsi infer(app.py)
-      payloadData = [
-        formattedImage || null,                 // 1. input_image_1
-        formattedExtraRef || null,              // 2. input_image_2
-        formattedGallery || [],                 // 3. input_images_extra (Gallery)
-        effectivePrompt,                        // 4. prompt
-        "None",                                 // 5. lora_adapter
-        0,                                      // 6. seed
-        true,                                   // 7. randomize_seed
-        1.0,                                    // 8. guidance_scale
-        4,                                      // 9. steps
-        1.0,                                    // 10. target_megapixels
-        true,                                   // 11. extras_condition_only
-        true,                                   // 12. pad_to_canvas
-        false,                                  // 13. vae_tiling
-        32,                                     // 14. resolution_multiple
-        0.0,                                    // 15. vae_ref_megapixels
-        "qwen",                                 // 16. decoder_vae
-        false,                                  // 17. keep_decoder_2x
-        true,                                   // 18. highlight_protection
-        0.35                                    // 19. highlight_protection_strength
-      ];
+      // Bangun payload data dinamis berdasarkan skema komponen Space
+      payloadData = [];
+
+      if (inputComponents.length > 0) {
+        let imageInputCount = 0;
+
+        for (const comp of inputComponents) {
+          const type = (comp.type || '').toLowerCase();
+          const label = (comp.label || '').toLowerCase();
+
+          if (type === 'textbox' || label.includes('prompt')) {
+            if (label.includes('negative') || label.includes('neg_prompt') || label.includes('neg prompt')) {
+              payloadData.push("");
+            } else {
+              payloadData.push(effectivePrompt);
+            }
+          } else if (type === 'image' || label.includes('image')) {
+            imageInputCount++;
+            if (imageInputCount === 1) {
+              payloadData.push(formattedImage || null);
+            } else if (imageInputCount === 2) {
+              payloadData.push(formattedExtraRef || null);
+            } else {
+              payloadData.push(null);
+            }
+          } else if (type === 'gallery' || label.includes('additional')) {
+            payloadData.push(formattedGallery);
+          } else if (comp.defaultValue !== undefined && comp.defaultValue !== null) {
+            payloadData.push(comp.defaultValue);
+          } else if (type === 'slider') {
+            if (label.includes('identity lock')) payloadData.push(shouldInjectAnatomy ? 65 : 0);
+            else payloadData.push(0);
+          } else if (type === 'checkbox') {
+            if (label.includes('identity') || label.includes('face') || label.includes('hands') || label.includes('anatomy')) {
+              payloadData.push(shouldInjectAnatomy);
+            } else {
+              payloadData.push(false);
+            }
+          } else {
+            payloadData.push(null);
+          }
+        }
+      } else {
+        payloadData = formattedImage ? [formattedImage, effectivePrompt] : [effectivePrompt];
+      }
 
       let rawResult: any;
       try {

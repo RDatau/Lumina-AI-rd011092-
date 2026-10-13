@@ -879,13 +879,6 @@ const retryOperation = async (
                            errorMsg.includes('not valid') || 
                            error.status === 400 || 
                            error.status === 403;
-      const isNetworkOrTimeout = errorMsg.includes('fetch failed') ||
-                                 errorMsg.includes('network') ||
-                                 errorMsg.includes('timeout') ||
-                                 errorMsg.includes('abort') ||
-                                 errorMsg.includes('connection') ||
-                                 errorMsg.includes('econnreset') ||
-                                 errorMsg.includes('socket');
 
       if ((isQuotaError || isKeyInvalid) && allKeys.length > 1 && i < totalAttempts - 1) {
         markGeminiKeyExhausted(activeKey);
@@ -895,10 +888,10 @@ const retryOperation = async (
         continue;
       }
 
-      if ((isQuotaError || isNetworkOrTimeout) && i < maxRetries) {
-        // Exponential backoff untuk quota atau network/timeout error
+      if (isQuotaError && allKeys.length <= 1 && i < maxRetries) {
+        // Exponential backoff jika hanya ada 1 key
         const delay = Math.pow(2, i + 1) * 1000;
-        console.warn(`[Gemini] ${isNetworkOrTimeout ? 'Network/Timeout' : 'Quota hit'}. Retrying in ${delay/1000}s... (Attempt ${i + 1}/${maxRetries})`);
+        console.warn(`[Gemini] Quota hit (429). Retrying in ${delay/1000}s... (Attempt ${i + 1}/${maxRetries})`);
         await new Promise(resolve => setTimeout(resolve, delay));
         continue;
       }
@@ -1256,62 +1249,48 @@ export const generateAgentResponse = async (
       tools.push({ googleSearch: {} });
     }
 
-    const primaryModel = getActiveTextModel(userProfile) || 'gemini-2.5-flash';
-    const fallbackModels = [primaryModel, 'gemini-2.5-flash', 'gemini-1.5-flash', 'gemini-2.5-flash-lite'].filter((v, i, a) => a.indexOf(v) === i);
-
-    let lastActiveError: any;
-    for (const modelToTry of fallbackModels) {
-      try {
-        const response = await aiClient.models.generateContent({
-          model: modelToTry,
+    try {
+      const response = await aiClient.models.generateContent({
+        model: getActiveTextModel(userProfile),
+        contents: contents as any,
+        config: { 
+          systemInstruction: createSystemInstruction(effectiveConfig, effectiveUserProfile, 'CHAT', history), 
+          temperature: 1.0, 
+          topP: 0.98,
+          thinkingConfig: { thinkingLevel: ThinkingLevel.HIGH },
+          safetySettings: safetySettings as any,
+          tools: tools.length > 0 ? tools : undefined
+        }
+      });
+      
+      if (!response.text) {
+         if (response.candidates?.[0]?.finishReason === 'SAFETY') throw new Error("RESPONSE_SAFETY_BLOCKED");
+         throw new Error("EMPTY_RESPONSE");
+      }
+      return response.text;
+    } catch (err: any) {
+      // Jika Google Search bermasalah dengan permissions (403) atau kuota (429), coba sekali lagi tanpa tools
+      if (tools.length > 0 && (err?.message?.includes('403') || err?.message?.includes('PERMISSION_DENIED') || err?.message?.includes('429') || err?.message?.includes('quota'))) {
+        console.warn("Retrying chat generation without tools due to permission or quota:", err?.message);
+        const fallbackResponse = await aiClient.models.generateContent({
+          model: getActiveTextModel(userProfile),
           contents: contents as any,
           config: { 
             systemInstruction: createSystemInstruction(effectiveConfig, effectiveUserProfile, 'CHAT', history), 
             temperature: 1.0, 
             topP: 0.98,
-            thinkingConfig: { thinkingLevel: ThinkingLevel.LOW },
-            safetySettings: safetySettings as any,
-            tools: tools.length > 0 ? tools : undefined
+            thinkingConfig: { thinkingLevel: ThinkingLevel.HIGH },
+            safetySettings: safetySettings as any
           }
         });
-        
-        if (!response.text) {
-           if (response.candidates?.[0]?.finishReason === 'SAFETY') throw new Error("RESPONSE_SAFETY_BLOCKED");
-           throw new Error("EMPTY_RESPONSE");
+        if (!fallbackResponse.text) {
+          if (fallbackResponse.candidates?.[0]?.finishReason === 'SAFETY') throw new Error("RESPONSE_SAFETY_BLOCKED");
+          throw new Error("EMPTY_RESPONSE");
         }
-        return response.text;
-      } catch (err: any) {
-        lastActiveError = err;
-        const msg = (err?.message || '').toLowerCase();
-        // Jika error tools (403/429), coba tanpa tools untuk model ini
-        if (tools.length > 0 && (msg.includes('403') || msg.includes('permission_denied') || msg.includes('429') || msg.includes('quota'))) {
-          try {
-            const fallbackResponse = await aiClient.models.generateContent({
-              model: modelToTry,
-              contents: contents as any,
-              config: { 
-                systemInstruction: createSystemInstruction(effectiveConfig, effectiveUserProfile, 'CHAT', history), 
-                temperature: 1.0, 
-                topP: 0.98,
-                thinkingConfig: { thinkingLevel: ThinkingLevel.LOW },
-                safetySettings: safetySettings as any
-              }
-            });
-            if (fallbackResponse.text) return fallbackResponse.text;
-          } catch {}
-        }
-        // Lanjutkan ke model fallback berikutnya jika 404 / not found / invalid argument / network error
-        if (msg.includes('404') || msg.includes('not found') || msg.includes('not supported') || msg.includes('invalid argument') || msg.includes('fetch failed')) {
-          console.warn(`[Gemini] Model ${modelToTry} failed, trying next fallback...`, msg);
-          continue;
-        }
-        // Jika error lain yang bukan model/network, langsung lempar atau break
-        if (msg.includes('safety') || msg.includes('429') || msg.includes('quota')) {
-          throw err;
-        }
+        return fallbackResponse.text;
       }
+      throw err;
     }
-    throw lastActiveError;
   }, effectiveUserProfile);
 };
 
