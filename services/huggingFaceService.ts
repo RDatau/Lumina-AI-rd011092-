@@ -907,7 +907,7 @@ export const generateWithHuggingFaceSpace = async (
           const addImg = additionalImages[idx];
           const slotNum = 3 + idx;
           try {
-            onStatusUpdate?.(`Mempersiapkan referensi tambahan (Image ${slotNum})...`, { slot: slotNum, label: `Image ${slotNum}: Referensi Tambahan (Detail Lengkap)`, url: addImg });
+            onStatusUpdate?.(`Mempersiapkan referensi tambahan (Image ${slotNum})...`, { slot: slotNum, label: `Image ${slotNum}: Ruangan & PAP Sebelumnya`, url: addImg });
             const up = await uploadToGradio(spaceHost, addImg, tokenToUse);
             if (up) formattedGallery.push(up);
           } catch (e) {
