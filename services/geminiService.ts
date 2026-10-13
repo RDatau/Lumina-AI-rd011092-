@@ -1997,34 +1997,74 @@ export const generatePAP = async (
   // 1. Analisa PAP sebelumnya (Pakaian murni, Ruangan, Framing Kamera Close up / Half body / Full body)
   let previousPapAnalysis: PapImageAnalysis | null = null;
   if (hasPreviousPap && latestPap?.image) {
-    onStatusUpdate?.("Menganalisa pakaian, framing kamera, dan ruangan dari PAP sebelumnya...");
+    const prevSlotNum = hasOutfitRef ? 3 : 2;
+    onStatusUpdate?.("Menganalisa pakaian, framing kamera, dan ruangan dari PAP sebelumnya...", {
+      slot: prevSlotNum,
+      label: `Image ${prevSlotNum}: PAP Sebelumnya (Menganalisa Framing)`,
+      url: latestPap.image
+    });
     previousPapAnalysis = await analyzePreviousPapImage(latestPap.image, latestPap.outfit, effectiveUserProfile, onStatusUpdate);
   }
 
-  // 2. Evaluasi ketat apakah PAP sebelumnya adalah CLOSE UP yang tidak memperlihatkan jelas outfit / bentuk tubuh / ruangan
-  const isLatestPapCloseUp = !!previousPapAnalysis && (
+  // 2. Evaluasi ketat apakah PAP sebelumnya adalah CLOSE UP atau HALF BODY yang membutuhkan referensi tambahan (outfit/tubuh/ruangan lengkap)
+  const isLatestPapCloseOrHalfBody = !!previousPapAnalysis && (
     previousPapAnalysis.shotType === 'close_up' || 
+    previousPapAnalysis.shotType === 'half_body' ||
     !previousPapAnalysis.isOutfitClear || 
     !previousPapAnalysis.isBodyClear || 
     !previousPapAnalysis.isRoomClear
   );
 
-  // 3. Cari PAP Referensi Pendukung di riwayat chat jika PAP sebelumnya adalah Close-up atau jika ada riwayat PAP sebelumnya
+  const promptOfLatestPap = ((latestPap?.imagePrompt || '') + ' ' + (latestPap?.text || '') + ' ' + (latestPap?.outfit || '')).toLowerCase();
+  const isPromptCloseOrHalf = /\b(close\s*up|closeup|half\s*body|halfbody|selfie|portrait|waist\s*up|upper\s*body|dada|wajah|muka|leher|kepala)\b/i.test(promptOfLatestPap);
+  const needsSupportingReference = isLatestPapCloseOrHalfBody || isPromptCloseOrHalf;
+  const isLatestPapCloseUp = !!previousPapAnalysis && (previousPapAnalysis.shotType === 'close_up' || !previousPapAnalysis.isOutfitClear);
+
+  // 3. Cari PAP Referensi Pendukung di riwayat chat jika PAP sebelumnya adalah Close-up atau Half-body
   const supportingPap = papsInHistory.length > 1 ? (
-    // Cari PAP sebelumnya yang memiliki outfit sama atau foto lebih awal yang berframing lebih luas (half body / full body)
+    // Prioritas 1: Cari PAP sebelumnya yang memiliki outfit sama dan berframing lebih luas (full body)
+    papsInHistory.slice(1).find((p) => {
+      const pText = ((p.imagePrompt || '') + ' ' + (p.outfit || '')).toLowerCase();
+      const isWiderShot = /\b(full\s*body|fullbody|seluruh\s*badan|berdiri|feet|legs|wide\s*shot)\b/i.test(pText);
+      const isSameOutfit = p.outfit && latestPap?.outfit && (
+        p.outfit.toLowerCase() === latestPap.outfit.toLowerCase() || 
+        p.outfit.toLowerCase().includes(latestPap.outfit.toLowerCase().slice(0, 10))
+      );
+      return !!p.image && isSameOutfit && isWiderShot;
+    }) ||
+    // Prioritas 2: Cari PAP sebelumnya yang memiliki outfit sama
     papsInHistory.slice(1).find((p) => {
       const isSameOutfit = p.outfit && latestPap?.outfit && (
         p.outfit.toLowerCase() === latestPap.outfit.toLowerCase() || 
         p.outfit.toLowerCase().includes(latestPap.outfit.toLowerCase().slice(0, 10))
       );
       return !!p.image && isSameOutfit;
-    }) || papsInHistory.slice(1).find(p => !!p.image) || papsInHistory[papsInHistory.length - 1]
+    }) ||
+    // Prioritas 3: Cari PAP sebelumnya yang berframing lebih luas (full body)
+    papsInHistory.slice(1).find((p) => {
+      const pText = ((p.imagePrompt || '') + ' ' + (p.outfit || '')).toLowerCase();
+      return !!p.image && /\b(full\s*body|fullbody|seluruh\s*badan|berdiri)\b/i.test(pText);
+    }) ||
+    // Prioritas 4: PAP lain yang valid
+    papsInHistory.slice(1).find(p => !!p.image) || 
+    papsInHistory[papsInHistory.length - 1]
   ) : null;
 
   let supportingPapAnalysis: PapImageAnalysis | null = null;
   if (supportingPap?.image && supportingPap.image !== latestPap?.image) {
-    if (isLatestPapCloseUp || !previousPapAnalysis?.isOutfitClear || !previousPapAnalysis?.isRoomClear) {
-      onStatusUpdate?.("PAP sebelumnya terdeteksi Close-up. AI Vision mengekstrak referensi pendukung untuk detail outfit, bentuk tubuh & ruangan...");
+    if (needsSupportingReference || !previousPapAnalysis?.isOutfitClear || !previousPapAnalysis?.isRoomClear) {
+      const shotLabel = previousPapAnalysis?.shotType === 'close_up' 
+        ? 'Close-up' 
+        : (previousPapAnalysis?.shotType === 'half_body' ? 'Half-body' : 'Framing Ketat');
+      const suppSlotNum = hasOutfitRef ? 4 : 3;
+      onStatusUpdate?.(
+        `PAP sebelumnya terdeteksi ${shotLabel}. Menyiapkan referensi tambahan untuk detail outfit, bentuk tubuh & ruangan...`,
+        {
+          slot: suppSlotNum,
+          label: `Image ${suppSlotNum}: Referensi Tambahan (${shotLabel} Guard)`,
+          url: supportingPap.image
+        }
+      );
       supportingPapAnalysis = await analyzePreviousPapImage(supportingPap.image, supportingPap.outfit, effectiveUserProfile);
     }
   }
@@ -2201,7 +2241,7 @@ ${identityNote}` });
     }
 
     const hasSupportingPap = !!supportingPap?.image && supportingPap.image !== latestPap?.image;
-    const shouldIncludeSupportingPap = hasSupportingPap && (isLatestPapCloseUp || papsInHistory.length >= 2);
+    const shouldIncludeSupportingPap = hasSupportingPap && (needsSupportingReference || papsInHistory.length >= 2);
 
     if (hasOutfitRef) {
       // 1. Jika ada upload referensi dari user -> Masuk sebagai Image 2 (Slot 2)
@@ -2226,11 +2266,14 @@ ${identityNote}` });
         translatorParts.push({ inlineData: { mimeType, data } });
       }
 
-      // 3. Masukkan PAP Referensi Pendukung sebagai Image 4 (Slot 4) jika PAP sebelumnya adalah close-up atau membutuhkan detail pakaian/ruangan lengkap
+      // 3. Masukkan PAP Referensi Pendukung sebagai Image 4 (Slot 4) jika PAP sebelumnya adalah close-up/half-body atau membutuhkan detail pakaian/ruangan lengkap
       if (shouldIncludeSupportingPap && supportingPap?.image) {
         const [oldHeader, oldData] = supportingPap.image.split(',');
         const oldMimeType = oldHeader.split(':')[1]?.split(';')[0] || 'image/jpeg';
-        onStatusUpdate?.("Menyiapkan Image 4 (PAP Referensi Pendukung)...", { slot: 4, label: "Image 4: PAP Referensi Pendukung (Detail Pakaian & Ruangan)", url: supportingPap.image });
+        const shotLabel = previousPapAnalysis?.shotType === 'close_up' 
+          ? 'Close-up' 
+          : (previousPapAnalysis?.shotType === 'half_body' ? 'Half-body' : 'Detail Lengkap');
+        onStatusUpdate?.("Menyiapkan Image 4 (PAP Referensi Pendukung)...", { slot: 4, label: `Image 4: Referensi Tambahan (${shotLabel} Guard)`, url: supportingPap.image });
         translatorParts.push({ text: `REFERENCE IMAGE 4 (SUPPORTING REFERENCE - VERIFIED FULL OUTFIT DNA, BODY BUILD & ROOM ANCHOR):
 1. SUPPORTING CONTEXT ANCHOR: This image serves as the verified supporting reference because the previous PAP was a close-up or tightly cropped shot.
 2. VERIFIED DETAILS: Use this image to faithfully anchor the exact room/environment setting (${analyzedRoom}), previous garment fabrics/colors (${analyzedOutfit}), and bodily silhouette (${resolvedBodyBuild}) without hallucination.
@@ -2264,11 +2307,14 @@ Retain the EXACT SAME LOCATION/SETTING with previous PAP (${analyzedRoom}). Char
         }
         translatorParts.push({ inlineData: { mimeType, data } });
 
-        // MASUKKAN PAP REFERENSI PENDUKUNG SEBAGAI IMAGE 3 (SLOT 3) JIKA PAP SEBELUMNYA CLOSE-UP / MEMERLUKAN REFERENSI LEBIH LENGKAP
+        // MASUKKAN PAP REFERENSI PENDUKUNG SEBAGAI IMAGE 3 (SLOT 3) JIKA PAP SEBELUMNYA CLOSE-UP / HALF-BODY / MEMERLUKAN REFERENSI LEBIH LENGKAP
         if (shouldIncludeSupportingPap && supportingPap?.image) {
           const [oldHeader, oldData] = supportingPap.image.split(',');
           const oldMimeType = oldHeader.split(':')[1]?.split(';')[0] || 'image/jpeg';
-          onStatusUpdate?.("Menyiapkan Image 3 (PAP Referensi Pendukung)...", { slot: 3, label: "Image 3: PAP Referensi Pendukung (Detail Lengkap)", url: supportingPap.image });
+          const shotLabel = previousPapAnalysis?.shotType === 'close_up' 
+            ? 'Close-up' 
+            : (previousPapAnalysis?.shotType === 'half_body' ? 'Half-body' : 'Detail Lengkap');
+          onStatusUpdate?.("Menyiapkan Image 3 (PAP Referensi Pendukung)...", { slot: 3, label: `Image 3: Referensi Tambahan (${shotLabel} Guard)`, url: supportingPap.image });
           translatorParts.push({ text: `REFERENCE IMAGE 3 (SUPPORTING REFERENCE - VERIFIED FULL OUTFIT DNA, BODY SILHOUETTE & ROOM CONTINUITY):
 1. REASON FOR SUPPORTING REFERENCE: The previous PAP (Reference Image 2) was a close-up shot where the full clothing, body silhouette, or room was tightly framed. Reference Image 3 provides the verified anchor for full attire, body shape, and environment.
 2. ZERO CONTRADICTION RULE:
@@ -2686,9 +2732,18 @@ ${isEffectiveUndress
           additionalImages.push(latestPap.image);
         }
 
-        // Slot 4 (Image 4): Jika PAP sebelumnya adalah close-up dan ada supportingPap, masukkan juga supportingPap
-        if (supportingPap?.image && supportingPap.image !== latestPap?.image && isLatestPapCloseUp) {
-          additionalImages.push(supportingPap.image);
+        // Slot 4 (Image 4): Jika PAP sebelumnya adalah close-up / half-body dan ada supportingPap, masukkan juga supportingPap
+        if (supportingPap?.image && supportingPap.image !== latestPap?.image && (needsSupportingReference || papsInHistory.length >= 2)) {
+          if (!additionalImages.includes(supportingPap.image)) {
+            additionalImages.push(supportingPap.image);
+            const slotIdx = 3 + additionalImages.indexOf(supportingPap.image);
+            const shotLabel = previousPapAnalysis?.shotType === 'close_up' ? 'Close-up' : (previousPapAnalysis?.shotType === 'half_body' ? 'Half-body' : 'Detail Lengkap');
+            onStatusUpdate?.(`Menyiapkan referensi tambahan (${shotLabel})...`, {
+              slot: slotIdx,
+              label: `Image ${slotIdx}: Referensi Tambahan (${shotLabel} Guard)`,
+              url: supportingPap.image
+            });
+          }
         }
 
         // Jika user mengunggah lebih dari 1 gambar pakaian, masukkan sisa upload ke gallery berikutnya
@@ -2703,22 +2758,40 @@ ${isEffectiveUndress
         if (hasPreviousPap && latestPap?.image) {
           additionalImages.push(latestPap.image);
         }
-        if (supportingPap?.image && supportingPap.image !== latestPap?.image && isLatestPapCloseUp) {
-          additionalImages.push(supportingPap.image);
+        if (supportingPap?.image && supportingPap.image !== latestPap?.image && (needsSupportingReference || papsInHistory.length >= 2)) {
+          if (!additionalImages.includes(supportingPap.image)) {
+            additionalImages.push(supportingPap.image);
+            const slotIdx = 3 + additionalImages.indexOf(supportingPap.image);
+            const shotLabel = previousPapAnalysis?.shotType === 'close_up' ? 'Close-up' : (previousPapAnalysis?.shotType === 'half_body' ? 'Half-body' : 'Detail Lengkap');
+            onStatusUpdate?.(`Menyiapkan referensi tambahan (${shotLabel})...`, {
+              slot: slotIdx,
+              label: `Image ${slotIdx}: Referensi Tambahan (${shotLabel} Guard)`,
+              url: supportingPap.image
+            });
+          }
         }
       } else if (hasPreviousPap && latestPap?.image) {
         // 1. Jika TIDAK ada foto referensi dari user -> PAP sebelumnya (referensi pakaian dan ruangan) masuk sebagai Image 2 (Slot 2)
         extraRefImage = latestPap.image;
 
         // 2. REFERENSI PENDUKUNG (Image 3) KE HUGGING FACE:
-        // Jika PAP sebelumnya terdeteksi close-up atau terdapat supportingPap/fullBodyPap di riwayat:
+        // Jika PAP sebelumnya terdeteksi close-up atau half-body atau terdapat supportingPap/fullBodyPap di riwayat:
         // Masukkan `supportingPap.image` ke Gallery (Slot 3) agar Hugging Face ZeroGPU menerima referensi visual lengkap untuk outfit, bentuk tubuh, dan ruangan!
         const supportingRefToInject = (supportingPap?.image && supportingPap.image !== latestPap.image)
           ? supportingPap.image
           : (fullBodyPap?.image && fullBodyPap.image !== latestPap.image ? fullBodyPap.image : null);
 
-        if (supportingRefToInject && !isExplicitOutfitChange) {
-          additionalImages.push(supportingRefToInject);
+        if (supportingRefToInject && (needsSupportingReference || !isExplicitOutfitChange)) {
+          if (!additionalImages.includes(supportingRefToInject)) {
+            additionalImages.push(supportingRefToInject);
+            const slotIdx = 3 + additionalImages.indexOf(supportingRefToInject);
+            const shotLabel = previousPapAnalysis?.shotType === 'close_up' ? 'Close-up' : (previousPapAnalysis?.shotType === 'half_body' ? 'Half-body' : 'Detail Lengkap');
+            onStatusUpdate?.(`Menyiapkan referensi tambahan (${shotLabel})...`, {
+              slot: slotIdx,
+              label: `Image ${slotIdx}: Referensi Tambahan (${shotLabel} Guard)`,
+              url: supportingRefToInject
+            });
+          }
         }
       }
 
@@ -2733,7 +2806,12 @@ ${isEffectiveUndress
           for (let i = 0; i < additionalImages.length; i++) {
             additionalImages[i] = await matchAspectRatioWithBlackFill(baseImage, additionalImages[i]);
             const sNum = 3 + i;
-            onStatusUpdate?.(`Menyelaraskan aspek rasio referensi (Slot ${sNum})...`, { slot: sNum, label: sNum === 4 ? "Image 4: PAP 1 (Penunjang Detail Pakaian & Ruangan)" : `Image ${sNum}: Ruangan & PAP Sebelumnya`, url: additionalImages[i] });
+            const isRefTambahan = additionalImages[i] === supportingPap?.image || additionalImages[i] === fullBodyPap?.image;
+            const shotLabel = previousPapAnalysis?.shotType === 'close_up' ? 'Close-up' : (previousPapAnalysis?.shotType === 'half_body' ? 'Half-body' : 'Detail Lengkap');
+            const refLabel = isRefTambahan
+              ? `Image ${sNum}: Referensi Tambahan (${shotLabel} Guard)`
+              : (sNum === 4 ? "Image 4: PAP 1 (Penunjang Detail Pakaian & Ruangan)" : `Image ${sNum}: Ruangan & PAP Sebelumnya`);
+            onStatusUpdate?.(`Menyelaraskan aspek rasio referensi (Slot ${sNum})...`, { slot: sNum, label: refLabel, url: additionalImages[i] });
           }
         }
       }

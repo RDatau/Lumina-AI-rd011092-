@@ -756,6 +756,13 @@ const ChatView: React.FC<ChatViewProps> = ({
         (status, previewInfo) => {
           if (isMounted.current) {
             setRegeneratingStatus(status);
+            if (previewInfo) {
+              setPapSlotPreview(previewInfo);
+              setAllPapSlots(prev => {
+                const filtered = prev.filter(p => p.slot !== previewInfo.slot);
+                return [...filtered, previewInfo].sort((a, b) => a.slot - b.slot);
+              });
+            }
           }
           onUpdateGeneration?.(capturedAgentId, status, 'pap');
         }
@@ -1963,6 +1970,41 @@ const ChatView: React.FC<ChatViewProps> = ({
         if (isMounted.current) {
           setLoadingType('pap'); 
           setLoadingStatus("Lagi bikin PAP..."); 
+          // Inisialisasi slot awal secara instan agar widget preview langsung muncul bersama seluruh referensi
+          const initialSlots: { slot: number; label: string; url: string }[] = [];
+          if (config.profilePic) {
+            initialSlots.push({
+              slot: 1,
+              label: "Image 1: Base / Identitas Karakter",
+              url: config.profilePic
+            });
+          }
+          if (fFiles.length > 0 && fFiles[0].mimeType.startsWith('image/')) {
+            initialSlots.push({
+              slot: 2,
+              label: "Image 2: Referensi Outfit User",
+              url: fFiles[0].data
+            });
+          } else {
+            const papsInHistory = [...historyToUse].filter(m => !!m.image).reverse();
+            if (papsInHistory.length > 0 && papsInHistory[0]?.image) {
+              initialSlots.push({
+                slot: 2,
+                label: "Image 2: PAP Sebelumnya",
+                url: papsInHistory[0].image
+              });
+              // Jika ada PAP sebelumnya lagi (referensi tambahan jika close up / half body)
+              if (papsInHistory.length > 1 && papsInHistory[1]?.image) {
+                initialSlots.push({
+                  slot: 3,
+                  label: "Image 3: Referensi Tambahan (Close-up / Half-body Guard)",
+                  url: papsInHistory[1].image
+                });
+              }
+            }
+          }
+          setAllPapSlots(initialSlots);
+          setPapSlotPreview(initialSlots[0] || null);
         }
         onUpdateGeneration?.(capturedAgentId, 'Lagi bikin PAP...', 'pap');
         const captionMatch = rawFirstResponse.match(/\[CAPTION:(.*?)\]/i); 
@@ -2947,7 +2989,7 @@ const ChatView: React.FC<ChatViewProps> = ({
           <div className="flex justify-start">
             <div className="rounded-[25px] rounded-tl-none p-4 flex flex-col gap-2 shadow-2xl min-w-[160px]" style={glassStyles}>
               {loadingType === 'pap' && (
-                <div className="mb-3 overflow-hidden rounded-2xl border border-white/20 aspect-video bg-black/50 flex items-center justify-center relative shadow-2xl min-w-[220px]">
+                <div className="mb-3 overflow-hidden rounded-2xl border border-white/20 aspect-video bg-black/50 flex flex-col justify-between relative shadow-2xl min-w-[220px]">
                   {/* Background Preview Gambar Slot dengan Opasitas 50% */}
                   {papSlotPreview?.url && (
                     <div className="absolute inset-0 overflow-hidden">
@@ -2956,7 +2998,7 @@ const ChatView: React.FC<ChatViewProps> = ({
                         className="w-full h-full object-cover opacity-50 transition-all duration-700 scale-105 filter blur-[0.5px]" 
                         alt="Slot Preview" 
                       />
-                      <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-black/30 to-black/60" />
+                      <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/30 to-black/60" />
                     </div>
                   )}
 
@@ -2965,35 +3007,46 @@ const ChatView: React.FC<ChatViewProps> = ({
                     style={{ background: `radial-gradient(circle at center, ${themeHex}30 0%, transparent 75%)` }}
                   ></div>
 
-                  {/* Badge Slot Info di Pojok Atas */}
+                  {/* Header: Badge Slot Info & Switcher di Pojok Atas */}
                   {papSlotPreview && (
-                    <div className="absolute top-2.5 left-2.5 right-2.5 flex items-center justify-between z-20 pointer-events-none">
-                      <span className="px-2.5 py-1 rounded-full bg-black/75 backdrop-blur-md text-[8px] font-black uppercase tracking-wider text-white border border-white/20 shadow-lg flex items-center gap-1.5 animate-in fade-in zoom-in-95 duration-300">
-                        <span className="w-1.5 h-1.5 rounded-full animate-ping" style={{ backgroundColor: themeHex }} />
-                        {papSlotPreview.label}
+                    <div className="relative top-0 left-0 right-0 p-2.5 flex items-center justify-between z-20 pointer-events-none gap-2">
+                      <span className="px-2.5 py-1 rounded-full bg-black/80 backdrop-blur-md text-[8px] font-black uppercase tracking-wider text-white border border-white/20 shadow-lg flex items-center gap-1.5 animate-in fade-in zoom-in-95 duration-300 truncate max-w-[65%]">
+                        <span className="w-1.5 h-1.5 rounded-full shrink-0 animate-ping" style={{ backgroundColor: themeHex }} />
+                        <span className="truncate">{papSlotPreview.label}</span>
                       </span>
                       {allPapSlots.length > 1 && (
-                        <div className="flex gap-1 pointer-events-auto">
-                          {allPapSlots.map(s => (
-                            <button 
-                              type="button"
-                              key={s.slot} 
-                              onClick={(e) => { e.stopPropagation(); setPapSlotPreview(s); }}
-                              className={`px-2 py-0.5 rounded text-[7px] font-black uppercase transition-all cursor-pointer ${s.slot === papSlotPreview.slot ? 'bg-white text-black font-extrabold shadow scale-105 ring-1 ring-white/50' : 'bg-black/60 text-white/70 hover:bg-black/80 hover:text-white border border-white/10'}`}
-                              title={s.label}
-                            >
-                              Img {s.slot}
-                            </button>
-                          ))}
+                        <div className="flex gap-1 pointer-events-auto shrink-0">
+                          {allPapSlots.map(s => {
+                            const isSelected = s.slot === papSlotPreview.slot;
+                            const isAdditionalRef = s.label.toLowerCase().includes('tambahan') || s.label.toLowerCase().includes('pendukung') || s.slot >= 3;
+                            return (
+                              <button 
+                                type="button"
+                                key={s.slot} 
+                                onClick={(e) => { e.stopPropagation(); setPapSlotPreview(s); }}
+                                className={`px-2 py-0.5 rounded text-[7px] font-black uppercase transition-all cursor-pointer flex items-center gap-0.5 ${
+                                  isSelected 
+                                    ? 'bg-white text-black font-extrabold shadow scale-105 ring-1 ring-white/50' 
+                                    : isAdditionalRef
+                                      ? 'bg-amber-500/25 text-amber-200 hover:bg-amber-500/40 border border-amber-400/40'
+                                      : 'bg-black/60 text-white/70 hover:bg-black/80 hover:text-white border border-white/10'
+                                }`}
+                                title={s.label}
+                              >
+                                {isAdditionalRef && <span className="text-[8px]">✨</span>}
+                                Img {s.slot}
+                              </button>
+                            );
+                          })}
                         </div>
                       )}
                     </div>
                   )}
 
                   {/* Spinner & Tulisan Generating PAP di Tengah */}
-                  <div className="flex flex-col items-center gap-2 z-10 p-4 text-center">
+                  <div className="relative flex flex-col items-center gap-1.5 z-10 px-4 py-2 text-center my-auto">
                     <div 
-                      className="w-8 h-8 rounded-full border-[3.5px] animate-spin shadow-lg"
+                      className="w-7 h-7 rounded-full border-[3px] animate-spin shadow-lg"
                       style={{ borderColor: `${themeHex}30`, borderTopColor: themeHex }}
                     ></div>
                     <span 
@@ -3002,11 +3055,43 @@ const ChatView: React.FC<ChatViewProps> = ({
                       Generating PAP...
                     </span>
                     {papSlotPreview && (
-                      <span className="text-[8px] font-bold text-white/90 line-clamp-1 max-w-[220px] drop-shadow mt-0.5 bg-black/40 px-2 py-0.5 rounded-full border border-white/10">
+                      <span className="text-[8px] font-bold text-white/90 line-clamp-1 max-w-[220px] drop-shadow mt-0.5 bg-black/50 px-2 py-0.5 rounded-full border border-white/10">
                         {loadingStatus}
                       </span>
                     )}
                   </div>
+
+                  {/* Footer: Mini Thumbnails Bar untuk melihat seluruh referensi langsung di widget */}
+                  {allPapSlots.length > 1 && (
+                    <div className="relative bottom-0 left-0 right-0 p-2 pt-0 flex items-center justify-center z-20 pointer-events-auto">
+                      <div className="flex items-center gap-1.5 px-2 py-1 rounded-xl bg-black/60 backdrop-blur-md border border-white/15 shadow-xl max-w-full overflow-x-auto custom-scrollbar">
+                        {allPapSlots.map(s => {
+                          const isSelected = s.slot === papSlotPreview?.slot;
+                          const isAdditionalRef = s.label.toLowerCase().includes('tambahan') || s.label.toLowerCase().includes('pendukung') || s.slot >= 3;
+                          return (
+                            <button
+                              key={s.slot}
+                              type="button"
+                              onClick={(e) => { e.stopPropagation(); setPapSlotPreview(s); }}
+                              className={`relative w-6 h-6 md:w-7 md:h-7 rounded-lg overflow-hidden border transition-all cursor-pointer shrink-0 ${
+                                isSelected 
+                                  ? 'ring-2 ring-white scale-110 shadow-lg border-transparent' 
+                                  : 'opacity-60 hover:opacity-100 border-white/20 hover:scale-105'
+                              }`}
+                              title={s.label}
+                            >
+                              <img src={s.url} alt={s.label} className="w-full h-full object-cover" />
+                              <span className={`absolute bottom-0 right-0 px-0.5 rounded-tl text-[6px] font-black leading-none text-white ${
+                                isAdditionalRef ? 'bg-amber-500' : 'bg-black/80'
+                              }`}>
+                                {s.slot}
+                              </span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
               <div className="flex gap-3 items-center">
