@@ -1294,19 +1294,7 @@ export const generateAgentResponse = async (
   }, effectiveUserProfile);
 };
 
-export interface PapImageAnalysis {
-  shotType: 'close_up' | 'half_body' | 'full_body';
-  isOutfitClear: boolean;
-  isBodyClear: boolean;
-  isRoomClear: boolean;
-  outfitPrompt: string;
-  roomPrompt: string;
-  placementSurface: string;
-  isNude: boolean;
-  bodyBuildPrompt?: string;
-}
-
-const previousPapAnalysisCache = new Map<string, PapImageAnalysis>();
+const previousPapAnalysisCache = new Map<string, { outfitPrompt: string; roomPrompt: string; placementSurface?: string; isNude: boolean }>();
 
 export const derivePlacementSurface = (roomStr: string): string => {
   if (!roomStr) return "on a suitable nearby surface in the setting";
@@ -1542,20 +1530,15 @@ export const analyzePreviousPapImage = async (
   outfitHint?: string, 
   userProfile?: UserProfile,
   onStatusUpdate?: (msg: string) => void
-): Promise<PapImageAnalysis> => {
+): Promise<{ outfitPrompt: string; roomPrompt: string; placementSurface: string; isNude: boolean }> => {
   const cacheKey = `${imageBase64.length}_${imageBase64.slice(0, 100)}`;
   if (previousPapAnalysisCache.has(cacheKey)) {
     const cached = previousPapAnalysisCache.get(cacheKey)!;
     return {
-      shotType: cached.shotType || 'half_body',
-      isOutfitClear: cached.isOutfitClear ?? true,
-      isBodyClear: cached.isBodyClear ?? true,
-      isRoomClear: cached.isRoomClear ?? true,
       outfitPrompt: cached.outfitPrompt,
       roomPrompt: cached.roomPrompt,
       placementSurface: cached.placementSurface || derivePlacementSurface(cached.roomPrompt),
-      isNude: cached.isNude,
-      bodyBuildPrompt: cached.bodyBuildPrompt || ''
+      isNude: cached.isNude
     };
   }
 
@@ -1572,19 +1555,11 @@ export const analyzePreviousPapImage = async (
             role: 'user',
             parts: [
               {
-                text: `Analyze this image with 100% forensic vision precision. Return a strict valid JSON object with EXACTLY nine fields:
-1. "shotType": Strictly classify the camera framing as one of: "close_up", "half_body", or "full_body".
-   - "close_up": Framing tightly focuses on the face, head, neck, or tight crop where the overall clothing, torso silhouette, or room are not clearly/fully visible.
-   - "half_body": Framing captures from waist or mid-torso upward, clearly showing upper outfit and torso build.
-   - "full_body": Framing captures the entire body down to knees or feet, showing the full attire silhouette and environment clearly.
-2. "isOutfitClear": A boolean (true if the person's complete clothing pieces or major upper/lower clothes are clearly visible; false if obscured, cropped out, or only a tiny neckline is shown).
-3. "isBodyClear": A boolean (true if the general body build, torso shape, and physique are clearly visible; false if cropped out or face-only).
-4. "isRoomClear": A boolean (true if the room interior / background environment is clearly identifiable and distinct; false if blurry background, close selfie, or obscured).
-5. "outfitPrompt": Describe ONLY the exact clothes she/he is wearing in this image. Include exact primary color(s), fabric(s), textures, motif, and garment type (e.g. "one white sleeveless ribbed crop top and one pair of light blue denim jeans"). STRICT QUANTITY RULE: Describe each garment as strictly ONE single piece or item. NEVER include words like "2-piece" or plural duplicate counts in outfitPrompt. DO NOT comment on her/his pose, face, body, or background. If she is already completely unclothed/naked/topless/bare skin, output strictly "unclothed, natural bare skin". If outfit is not visible due to tight close-up, specify what little is visible or "obscured by tight close-up framing".
-6. "roomPrompt": Describe ONLY the room interior/location setting: environment, background, bed, sheets, headboard, wall colors, lighting, or outdoor landscape (e.g. "an intimate bedroom with warm bedside lamp lighting" or "a tropical sunny beach with white sand and blue ocean waves"). DO NOT mention the person or clothes.
-7. "placementSurface": Suggest the most logical, natural nearby surface or spot in THIS SPECIFIC environment where removed clothes would be set aside (e.g. "on one corner of the bed frame", "on a nearby chair", "on a beach towel on the sand", "on a lounge chair by the pool", "on a sofa", "on the side table").
-8. "isNude": A boolean (true if completely undressed, topless, or unclothed; false if wearing regular clothes).
-9. "bodyBuildPrompt": Brief photographic description of the physical body build, skin tone, and proportions visible or implied (e.g. "slender build with natural fair skin tone and delicate collarbones").
+                text: `Analyze this image with 100% forensic precision. Return a strict valid JSON object with EXACTLY four fields:
+1. "outfitPrompt": Describe ONLY the exact clothes she/he is wearing in this image. Include exact primary color(s), fabric(s), textures, motif, corak, and garment type (e.g. "a white sleeveless ribbed crop top and one pair of light blue denim jeans"). STRICT QUANTITY RULE: Describe each garment as strictly ONE single piece or item (e.g., "one white crop top" or "one pair of light blue denim jeans"). NEVER include words like "2-piece", "two-piece", or plural duplicate counts in outfitPrompt. DO NOT comment on her/his pose, face, body, or background. If she is already completely unclothed/naked/topless/bare skin, output strictly "unclothed, natural bare skin".
+2. "roomPrompt": Describe ONLY the room interior/location setting: environment, background, bed, sheets, headboard, wall colors, lighting, or outdoor landscape (e.g. "an intimate bedroom with warm bedside lamp lighting" or "a tropical sunny beach with white sand and blue ocean waves"). DO NOT mention the person or clothes.
+3. "placementSurface": Suggest the most logical, natural nearby surface or spot in THIS SPECIFIC environment where removed clothes would be set aside (e.g. "on one corner of the bed frame", "on a nearby chair", "on a beach towel on the sand", "on a lounge chair by the pool", "on a sofa", "on the side table").
+4. "isNude": A boolean (true if she is completely undressed, topless, or unclothed; false if she is wearing regular clothes).
 
 Return ONLY raw JSON, with no markdown code fences or backticks.`
               },
@@ -1604,35 +1579,18 @@ Return ONLY raw JSON, with no markdown code fences or backticks.`
       const text = response.text || '';
       const cleanedJson = text.replace(/```json/gi, '').replace(/```/g, '').trim();
       const parsed = JSON.parse(cleanedJson);
-
-      const rawShotType = String(parsed.shotType || '').toLowerCase().trim();
-      const shotType: 'close_up' | 'half_body' | 'full_body' = 
-        (rawShotType.includes('close') || rawShotType.includes('closeup') || rawShotType.includes('face') || rawShotType.includes('portrait'))
-          ? 'close_up'
-          : (rawShotType.includes('full') ? 'full_body' : 'half_body');
-
-      const isOutfitClear = parsed.isOutfitClear !== undefined ? !!parsed.isOutfitClear : (shotType !== 'close_up');
-      const isBodyClear = parsed.isBodyClear !== undefined ? !!parsed.isBodyClear : (shotType !== 'close_up');
-      const isRoomClear = parsed.isRoomClear !== undefined ? !!parsed.isRoomClear : (shotType !== 'close_up');
-
       const rawOutfit = typeof parsed.outfitPrompt === 'string' && parsed.outfitPrompt.trim()
         ? parsed.outfitPrompt.trim()
         : cleanRawCaptionToPureGarment(outfitHint || '');
       const outfitPrompt = cleanRawCaptionToPureGarment(rawOutfit);
       const roomPrompt = typeof parsed.roomPrompt === 'string' && parsed.roomPrompt.trim() ? parsed.roomPrompt.trim() : 'identical environment setting';
       const placementSurface = typeof parsed.placementSurface === 'string' && parsed.placementSurface.trim() ? parsed.placementSurface.trim() : derivePlacementSurface(roomPrompt);
-      const bodyBuildPrompt = typeof parsed.bodyBuildPrompt === 'string' ? parsed.bodyBuildPrompt.trim() : '';
 
       return {
-        shotType,
-        isOutfitClear,
-        isBodyClear,
-        isRoomClear,
         outfitPrompt,
         roomPrompt,
         placementSurface,
-        isNude: !!parsed.isNude,
-        bodyBuildPrompt
+        isNude: !!parsed.isNude
       };
     }, userProfile, onStatusUpdate);
 
@@ -1643,16 +1601,11 @@ Return ONLY raw JSON, with no markdown code fences or backticks.`
     const isNude = (outfitHint || '').toLowerCase().includes('nude') || (outfitHint || '').toLowerCase().includes('naked') || (outfitHint || '').toLowerCase().includes('telanjang');
     const fallbackOutfit = cleanRawCaptionToPureGarment(outfitHint || 'her/his previous outfit');
     const fallbackRoom = 'identical environment setting';
-    const fallback: PapImageAnalysis = {
-      shotType: 'half_body',
-      isOutfitClear: true,
-      isBodyClear: true,
-      isRoomClear: true,
+    const fallback = {
       outfitPrompt: fallbackOutfit,
       roomPrompt: fallbackRoom,
       placementSurface: derivePlacementSurface(fallbackRoom),
-      isNude,
-      bodyBuildPrompt: ''
+      isNude
     };
     return fallback;
   }
@@ -1994,39 +1947,11 @@ export const generatePAP = async (
 
   const isExplicitOutfitChange = !isExplicitUndress && (outfitChangeRegex.test(lowCaption) || outfitChangeKeywords.some(kw => lowCaption.includes(kw)));
 
-  // 1. Analisa PAP sebelumnya (Pakaian murni, Ruangan, Framing Kamera Close up / Half body / Full body)
-  let previousPapAnalysis: PapImageAnalysis | null = null;
+  // 1. Analisa PAP sebelumnya (Pakaian murni & Ruangan murni) atau siapkan First PAP Context
+  let previousPapAnalysis: { outfitPrompt: string; roomPrompt: string; placementSurface?: string; isNude: boolean } | null = null;
   if (hasPreviousPap && latestPap?.image) {
-    onStatusUpdate?.("Menganalisa pakaian, framing kamera, dan ruangan dari PAP sebelumnya...");
+    onStatusUpdate?.("Menganalisa pakaian dan ruangan dari PAP sebelumnya...");
     previousPapAnalysis = await analyzePreviousPapImage(latestPap.image, latestPap.outfit, effectiveUserProfile, onStatusUpdate);
-  }
-
-  // 2. Evaluasi ketat apakah PAP sebelumnya adalah CLOSE UP yang tidak memperlihatkan jelas outfit / bentuk tubuh / ruangan
-  const isLatestPapCloseUp = !!previousPapAnalysis && (
-    previousPapAnalysis.shotType === 'close_up' || 
-    !previousPapAnalysis.isOutfitClear || 
-    !previousPapAnalysis.isBodyClear || 
-    !previousPapAnalysis.isRoomClear
-  );
-
-  // 3. Cari PAP Referensi Pendukung di riwayat chat jika PAP sebelumnya adalah Close-up atau jika ada riwayat PAP sebelumnya
-  const supportingPap = papsInHistory.length > 1 ? (
-    // Cari PAP sebelumnya yang memiliki outfit sama atau foto lebih awal yang berframing lebih luas (half body / full body)
-    papsInHistory.slice(1).find((p) => {
-      const isSameOutfit = p.outfit && latestPap?.outfit && (
-        p.outfit.toLowerCase() === latestPap.outfit.toLowerCase() || 
-        p.outfit.toLowerCase().includes(latestPap.outfit.toLowerCase().slice(0, 10))
-      );
-      return !!p.image && isSameOutfit;
-    }) || papsInHistory.slice(1).find(p => !!p.image) || papsInHistory[papsInHistory.length - 1]
-  ) : null;
-
-  let supportingPapAnalysis: PapImageAnalysis | null = null;
-  if (supportingPap?.image && supportingPap.image !== latestPap?.image) {
-    if (isLatestPapCloseUp || !previousPapAnalysis?.isOutfitClear || !previousPapAnalysis?.isRoomClear) {
-      onStatusUpdate?.("PAP sebelumnya terdeteksi Close-up. AI Vision mengekstrak referensi pendukung untuk detail outfit, bentuk tubuh & ruangan...");
-      supportingPapAnalysis = await analyzePreviousPapImage(supportingPap.image, supportingPap.outfit, effectiveUserProfile);
-    }
   }
 
   // Deteksi apakah PAP sebelumnya dalam status telanjang / tanpa busana
@@ -2049,37 +1974,9 @@ export const generatePAP = async (
 
   // 4. Logika PAP Pertama (Chat pertama tanpa riwayat PAP)
   const firstPapContext = !hasPreviousPap ? generateFirstPapContext(rawCaption, isAgentMale) : null;
-
-  // SINTESIS PINTAR BEBAS KONTRADIKSI:
-  // Jika PAP sebelumnya Close-up di mana pakaian tidak kelihatan jelas, terjemahkan pakaian dari referensi pendukung
-  let rawOutfit = '';
-  if (isLatestPapCloseUp && supportingPapAnalysis?.outfitPrompt && (!previousPapAnalysis?.isOutfitClear || previousPapAnalysis?.outfitPrompt.includes('obscured'))) {
-    rawOutfit = supportingPapAnalysis.outfitPrompt;
-  } else {
-    rawOutfit = previousPapAnalysis?.outfitPrompt || latestPap?.outfit || supportingPapAnalysis?.outfitPrompt || (firstPapContext ? firstPapContext.recommendedOutfit : '');
-  }
+  const rawOutfit = previousPapAnalysis?.outfitPrompt || latestPap?.outfit || (firstPapContext ? firstPapContext.recommendedOutfit : '');
   const analyzedOutfit = cleanRawCaptionToPureGarment(rawOutfit);
-
-  // Jika ruangan di close-up tidak jelas / kabur, ambil ruangan dari referensi pendukung
-  let analyzedRoom = 'identical bedroom interior, bed, sheets, lighting';
-  if (isLatestPapCloseUp && supportingPapAnalysis?.roomPrompt && (!previousPapAnalysis?.isRoomClear || previousPapAnalysis?.roomPrompt === 'identical environment setting')) {
-    analyzedRoom = supportingPapAnalysis.roomPrompt;
-  } else if (previousPapAnalysis?.roomPrompt && previousPapAnalysis.roomPrompt !== 'identical environment setting') {
-    analyzedRoom = previousPapAnalysis.roomPrompt;
-  } else if (supportingPapAnalysis?.roomPrompt) {
-    analyzedRoom = supportingPapAnalysis.roomPrompt;
-  } else if (firstPapContext?.roomSetting) {
-    analyzedRoom = firstPapContext.roomSetting;
-  }
-
-  const placementSpot = (isLatestPapCloseUp && supportingPapAnalysis?.placementSurface)
-    ? supportingPapAnalysis.placementSurface
-    : (previousPapAnalysis?.placementSurface || derivePlacementSurface(analyzedRoom));
-
-  const resolvedBodyBuild = (isLatestPapCloseUp && supportingPapAnalysis?.bodyBuildPrompt)
-    ? supportingPapAnalysis.bodyBuildPrompt
-    : (previousPapAnalysis?.bodyBuildPrompt || agentPhysiqueDesc);
-
+  const analyzedRoom = previousPapAnalysis?.roomPrompt || (firstPapContext ? firstPapContext.roomSetting : 'identical bedroom interior, bed, sheets, lighting');
   const previousOutfitHint = analyzedOutfit ? ` (Outfit: ${analyzedOutfit})` : '';
 
   // Deteksi Granular Kategori Undress (Bottom-Only, Top-Only, atau Full Undress)
@@ -2143,6 +2040,8 @@ export const generatePAP = async (
     ? `Make the single person in image 1 do the exact same pose as shown in image 2. The person in Image 1 must wear her/his exact same outfit (${analyzedOutfit}) and be in the exact same room: ${analyzedRoom}. CRITICAL: Strictly EXACTLY ONE PERSON in frame. Do NOT render any second person or clone from image 2 or ${papSlotRef} into the background.`
     : "Make the single person in image 1 do the exact same pose as shown in image 2. CRITICAL: Strictly EXACTLY ONE PERSON in frame. Do NOT render any second person or clone from image 2 into the background.";
 
+  const placementSpot = previousPapAnalysis?.placementSurface || derivePlacementSurface(analyzedRoom);
+
   const WEAR_UPLOADED_OUTFIT_PROMPT = hasPreviousPap
     ? `Make Character 1 from Image 1 wear the exact outfit shown in Image 2. Image 1 is strictly for facial identity, hairstyle, skin tone, and biometrics. Image 2 is strictly a visual clothing reference (ignore any person or room in Image 2). Room/location setting: ${analyzedRoom}. Her previous outfit (${analyzedOutfit}) extracted from Image 3 is neatly placed in the setting ${placementSpot}. ${englishCaption ? 'Pose/Action: ' + englishCaption : ''}`
     : `Make Character 1 from Image 1 wear the exact outfit shown in Image 2. Image 1 is strictly for facial identity, hairstyle, skin tone, and biometrics. Image 2 is strictly a visual clothing reference (ignore any person or room in Image 2). ${englishCaption ? 'Pose/Action: ' + englishCaption : ''}`;
@@ -2200,8 +2099,9 @@ ${identityNote}` });
       translatorParts.push({ inlineData: { mimeType, data } });
     }
 
-    const hasSupportingPap = !!supportingPap?.image && supportingPap.image !== latestPap?.image;
-    const shouldIncludeSupportingPap = hasSupportingPap && (isLatestPapCloseUp || papsInHistory.length >= 2);
+    const oldestPap = papsInHistory.length > 1 ? papsInHistory[papsInHistory.length - 1] : null;
+    const hasOldestPap = !!oldestPap?.image && oldestPap.image !== latestPap?.image;
+    const shouldIncludeOldestPap = hasOldestPap && papsInHistory.length >= 2;
 
     if (hasOutfitRef) {
       // 1. Jika ada upload referensi dari user -> Masuk sebagai Image 2 (Slot 2)
@@ -2226,15 +2126,14 @@ ${identityNote}` });
         translatorParts.push({ inlineData: { mimeType, data } });
       }
 
-      // 3. Masukkan PAP Referensi Pendukung sebagai Image 4 (Slot 4) jika PAP sebelumnya adalah close-up atau membutuhkan detail pakaian/ruangan lengkap
-      if (shouldIncludeSupportingPap && supportingPap?.image) {
-        const [oldHeader, oldData] = supportingPap.image.split(',');
+      // 3. Selalu masukkan PAP 1 sebagai Image 4 (Slot 4) sebagai referensi penunjang detail pakaian dan ruangan awal
+      if (shouldIncludeOldestPap && oldestPap?.image) {
+        const [oldHeader, oldData] = oldestPap.image.split(',');
         const oldMimeType = oldHeader.split(':')[1]?.split(';')[0] || 'image/jpeg';
-        onStatusUpdate?.("Menyiapkan Image 4 (PAP Referensi Pendukung)...", { slot: 4, label: "Image 4: PAP Referensi Pendukung (Detail Pakaian & Ruangan)", url: supportingPap.image });
-        translatorParts.push({ text: `REFERENCE IMAGE 4 (SUPPORTING REFERENCE - VERIFIED FULL OUTFIT DNA, BODY BUILD & ROOM ANCHOR):
-1. SUPPORTING CONTEXT ANCHOR: This image serves as the verified supporting reference because the previous PAP was a close-up or tightly cropped shot.
-2. VERIFIED DETAILS: Use this image to faithfully anchor the exact room/environment setting (${analyzedRoom}), previous garment fabrics/colors (${analyzedOutfit}), and bodily silhouette (${resolvedBodyBuild}) without hallucination.
-3. ZERO CONTRADICTIONS: If Character 1 is changing into the new outfit in Image 2 or undressing, she is NOT wearing this outfit on her body; it is strictly an anchor for room setting and discarded clothes.` });
+        onStatusUpdate?.("Menyiapkan Image 4 (PAP 1 Penunjang)...", { slot: 4, label: "Image 4: PAP 1 (Penunjang Detail Pakaian & Ruangan)", url: oldestPap.image });
+        translatorParts.push({ text: `REFERENCE IMAGE 4 (SUPPLEMENTARY REFERENCE - PAP 1 INITIAL FULL DETAILED OUTFIT & ROOM):
+1. As the initial PAP, this image (PAP 1) provides comprehensive full outfit and room details to serve as a reliable anchor.
+2. DETAILED OUTFIT & ROOM ANCHOR: Faithfully reference the exact clothing details, fabric textures, and full room/environment setting from this initial PAP to prevent loss of detail or hallucination.` });
         translatorParts.push({ inlineData: { mimeType: oldMimeType, data: oldData } });
       }
     } else {
@@ -2264,23 +2163,23 @@ Retain the EXACT SAME LOCATION/SETTING with previous PAP (${analyzedRoom}). Char
         }
         translatorParts.push({ inlineData: { mimeType, data } });
 
-        // MASUKKAN PAP REFERENSI PENDUKUNG SEBAGAI IMAGE 3 (SLOT 3) JIKA PAP SEBELUMNYA CLOSE-UP / MEMERLUKAN REFERENSI LEBIH LENGKAP
-        if (shouldIncludeSupportingPap && supportingPap?.image) {
-          const [oldHeader, oldData] = supportingPap.image.split(',');
+        // SELALU MASUKKAN PAP 1 SEBAGAI IMAGE 3 (SLOT 3) SEBAGAI REFERENSI PENUNJANG DETAIL PAKAIAN DAN RUANGAN AWAL
+        if (shouldIncludeOldestPap && oldestPap?.image && !isExplicitOutfitChange && !isEffectiveUndress) {
+          const [oldHeader, oldData] = oldestPap.image.split(',');
           const oldMimeType = oldHeader.split(':')[1]?.split(';')[0] || 'image/jpeg';
-          onStatusUpdate?.("Menyiapkan Image 3 (PAP Referensi Pendukung)...", { slot: 3, label: "Image 3: PAP Referensi Pendukung (Detail Lengkap)", url: supportingPap.image });
-          translatorParts.push({ text: `REFERENCE IMAGE 3 (SUPPORTING REFERENCE - VERIFIED FULL OUTFIT DNA, BODY SILHOUETTE & ROOM CONTINUITY):
-1. REASON FOR SUPPORTING REFERENCE: The previous PAP (Reference Image 2) was a close-up shot where the full clothing, body silhouette, or room was tightly framed. Reference Image 3 provides the verified anchor for full attire, body shape, and environment.
-2. ZERO CONTRADICTION RULE:
-${isEffectiveUndress
-  ? `   - CHARACTER 1 IS 100% UNCLOTHED: Character 1 is completely undressed on her body (100% natural bare skin). Absolutely DO NOT depict her wearing the clothes from Reference Image 3 on her body!
-   - DISCARDED CLOTHES ON SURFACE: Her removed outfit (${analyzedOutfit}) from Reference Image 3 is neatly set aside on ${placementSpot} as 1 or 2 small compact pieces.
-   - ROOM CONTINUITY: The room environment and lighting faithfully match Reference Image 3 (${analyzedRoom}).`
-  : (isExplicitOutfitChange
-    ? `   - NEW OUTFIT COMMANDED: Character 1 wears the NEW requested outfit. The room environment (${analyzedRoom}) and body proportions (${resolvedBodyBuild}) continue faithfully from Reference Image 3.`
-    : `   - COMPLETE ATTIRE CONTINUITY: Character 1 is wearing her complete outfit from Reference Image 3 (${analyzedOutfit}) in the room (${analyzedRoom}). Both upper and lower garments must be faithfully rendered without losing lower-body context.`)}
-3. BODY PROPORTIONS: Character 1's physical body build and silhouette match ${resolvedBodyBuild}.` });
+          onStatusUpdate?.("Menyiapkan Image 3 (PAP 1 Penunjang)...", { slot: 3, label: "Image 3: PAP 1 (Penunjang Detail Pakaian & Ruangan)", url: oldestPap.image });
+          translatorParts.push({ text: `REFERENCE IMAGE 3 (SUPPLEMENTARY REFERENCE - PAP 1 INITIAL FULL DETAILED OUTFIT & ROOM):
+1. As the initial PAP, this image (PAP 1) provides comprehensive full outfit and room details to serve as a reliable anchor.
+2. DETAILED OUTFIT & ROOM ANCHOR: Faithfully reference the exact clothing details, fabric textures, and full room/environment setting from this initial PAP to prevent loss of detail or hallucination.` });
           translatorParts.push({ inlineData: { mimeType: oldMimeType, data: oldData } });
+        } else if (fullBodyPap?.image && fullBodyPap.image !== latestPap.image && !isExplicitOutfitChange && !isEffectiveUndress) {
+          const [fbHeader, fbData] = fullBodyPap.image.split(',');
+          const fbMimeType = fbHeader.split(':')[1]?.split(';')[0] || 'image/jpeg';
+          onStatusUpdate?.("Menyiapkan Image 3 (Full-Body)...", { slot: 3, label: "Image 3: Full-Body Outfit Reference", url: fullBodyPap.image });
+          translatorParts.push({ text: `REFERENCE IMAGE 3 (FULL-BODY OUTFIT & COMPLEMENTARY GARMENT REFERENCE):
+1. OUTFIT PATTERN CONTINUITY: Reference Image 3 displays the full-body or complementary view of the same continuous outfit (${analyzedOutfit}).
+2. COMPLEMENTARY GARMENT DETAILS: Faithfully copy and match any missing upper garment/top/neckline, lower skirt/pants length, fabric textures, embroidery, motifs, and hem details from Reference Image 3 when generating the new shot!` });
+          translatorParts.push({ inlineData: { mimeType: fbMimeType, data: fbData } });
         }
       }
     }
@@ -2477,9 +2376,7 @@ ${isEffectiveUndress
                     : (isExplicitOutfitChange
                       ? `Start with "Make the person in image 1 wear [Extremely Detailed Requested Attire in English] in the exact same room: ${analyzedRoom}, posing [Describe requested pose in English]".`
                       : (isPureContinuityRequest
-                          ? (isLatestPapCloseUp && shouldIncludeSupportingPap
-                              ? `Start with "Make the person in image 1 wear her/his complete outfit: ${analyzedOutfit} in the exact same room: ${analyzedRoom}, with her full body and complete outfit clearly visible, while changing her/his pose and camera angle to [Describe requested pose in English]".`
-                              : `Start with "Make the person in image 1 wear her/his exact same outfit: ${analyzedOutfit} in the exact same room: ${analyzedRoom}, while changing her/his pose and camera angle to [Describe requested pose in English]".`)
+                          ? `Start with "Make the person in image 1 wear her/his exact same outfit: ${analyzedOutfit} in the exact same room: ${analyzedRoom}, while changing her/his pose and camera angle to [Describe requested pose in English]".`
                           : (firstPapContext
                               ? `Start with "Character 1 is engaged in ${firstPapContext.activity} during ${firstPapContext.timeOfDay}, wearing ${firstPapContext.recommendedOutfit} in a ${firstPapContext.roomSetting}, posing [Describe requested pose in English]".`
                               : `Start with "Character 1 is wearing [Extremely Detailed Outfit DNA / Requested Attire in English] in the exact same room: ${analyzedRoom}, posing [Describe requested pose in English]".`))))));
@@ -2686,11 +2583,6 @@ ${isEffectiveUndress
           additionalImages.push(latestPap.image);
         }
 
-        // Slot 4 (Image 4): Jika PAP sebelumnya adalah close-up dan ada supportingPap, masukkan juga supportingPap
-        if (supportingPap?.image && supportingPap.image !== latestPap?.image && isLatestPapCloseUp) {
-          additionalImages.push(supportingPap.image);
-        }
-
         // Jika user mengunggah lebih dari 1 gambar pakaian, masukkan sisa upload ke gallery berikutnya
         if (outfitImages.length > 1) {
           outfitImages.slice(1).forEach(img => {
@@ -2703,22 +2595,15 @@ ${isEffectiveUndress
         if (hasPreviousPap && latestPap?.image) {
           additionalImages.push(latestPap.image);
         }
-        if (supportingPap?.image && supportingPap.image !== latestPap?.image && isLatestPapCloseUp) {
-          additionalImages.push(supportingPap.image);
-        }
       } else if (hasPreviousPap && latestPap?.image) {
         // 1. Jika TIDAK ada foto referensi dari user -> PAP sebelumnya (referensi pakaian dan ruangan) masuk sebagai Image 2 (Slot 2)
         extraRefImage = latestPap.image;
 
-        // 2. REFERENSI PENDUKUNG (Image 3) KE HUGGING FACE:
-        // Jika PAP sebelumnya terdeteksi close-up atau terdapat supportingPap/fullBodyPap di riwayat:
-        // Masukkan `supportingPap.image` ke Gallery (Slot 3) agar Hugging Face ZeroGPU menerima referensi visual lengkap untuk outfit, bentuk tubuh, dan ruangan!
-        const supportingRefToInject = (supportingPap?.image && supportingPap.image !== latestPap.image)
-          ? supportingPap.image
-          : (fullBodyPap?.image && fullBodyPap.image !== latestPap.image ? fullBodyPap.image : null);
-
-        if (supportingRefToInject && !isExplicitOutfitChange) {
-          additionalImages.push(supportingRefToInject);
+        // 2. SOLUSI HIRARKI SLOT KETAT & MULTI-PAP SAMPLING:
+        // Jika PAP terakhir (PAP 2) berpotongan half-body dan ada PAP full-body sebelumnya (PAP 1 / fullBodyPap) dari sesi outfit yang sama,
+        // masukkan `fullBodyPap.image` ke Gallery (Slot 3) HANYA jika user tidak mengunggah gambar baru & tidak meminta ganti baju/lepas baju!
+        if (fullBodyPap?.image && fullBodyPap.image !== latestPap.image && !isExplicitOutfitChange && !isEffectiveUndress) {
+          additionalImages.push(fullBodyPap.image);
         }
       }
 
