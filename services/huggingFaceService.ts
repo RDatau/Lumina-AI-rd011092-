@@ -320,80 +320,134 @@ const uploadToGradio = async (spaceHost: string, dataUrl: string, token?: string
     ];
 
     let lastErrorMsg = '';
+    let uploadedFileData: any = null;
 
     for (const ep of uploadEndpoints) {
-      try {
-        const formData = new FormData();
-        formData.append('files', blob, 'input_image.png');
+      if (uploadedFileData) break;
+      for (const fieldName of ['files', 'file']) {
+        if (uploadedFileData) break;
+        try {
+          const formData = new FormData();
+          formData.append(fieldName, blob, 'input_image.png');
 
-        const resp = await proxyFetch(ep, {
-          method: 'POST',
-          headers,
-          body: formData
-        });
+          const resp = await proxyFetch(ep, {
+            method: 'POST',
+            headers,
+            body: formData
+          });
 
-        if (resp && resp.ok) {
-          const text = await resp.text();
-          const trimmed = text.trim();
-          let parsed: any = null;
-          try {
-            parsed = JSON.parse(trimmed);
-          } catch (e) {
-            console.warn("[HF-Upload] Response bukan JSON valid:", trimmed.slice(0, 100));
-          }
+          if (resp && resp.ok) {
+            const text = await resp.text();
+            const trimmed = text.trim();
 
-          if (Array.isArray(parsed) && parsed.length > 0) {
-            const firstItem = parsed[0];
-            if (typeof firstItem === 'string') {
-              return {
-                path: firstItem,
-                url: `${cleanHost}/gradio_api/file=${firstItem}`,
-                orig_name: 'input_image.png',
-                size: blob.size,
-                mime_type: mime,
-                meta: { _type: 'gradio.FileData' }
-              };
-            } else if (firstItem && typeof firstItem === 'object') {
-              return {
-                path: firstItem.path || firstItem.name || '',
-                url: firstItem.url || (firstItem.path ? `${cleanHost}/gradio_api/file=${firstItem.path}` : ''),
-                orig_name: firstItem.orig_name || 'input_image.png',
-                size: firstItem.size || blob.size,
-                mime_type: firstItem.mime_type || mime,
-                meta: firstItem.meta || { _type: 'gradio.FileData' }
-              };
+            // Cek apakah mengembalikan HTML (Space sedang tidur / error page)
+            if (trimmed.startsWith('<') || trimmed.toLowerCase().includes('<!doctype') || trimmed.toLowerCase().includes('<html')) {
+              throw new Error("Space Hugging Face sedang tidur (Sleeping) atau belum aktif. Silakan buka halaman Space di browser untuk membangunkannya.");
             }
-          } else if (parsed && typeof parsed === 'object' && Array.isArray(parsed.files) && parsed.files.length > 0) {
-            const fileItem = parsed.files[0];
-            const filePath = typeof fileItem === 'string' ? fileItem : (fileItem.path || '');
-            return {
-              path: filePath,
-              url: `${cleanHost}/gradio_api/file=${filePath}`,
-              orig_name: 'input_image.png',
-              size: blob.size,
-              mime_type: mime,
-              meta: { _type: 'gradio.FileData' }
-            };
+
+            let parsed: any = null;
+            try {
+              parsed = JSON.parse(trimmed);
+            } catch (e) {
+              // Jika bukan JSON tapi string path biasa
+              if (trimmed.length > 0 && !trimmed.startsWith('<')) {
+                uploadedFileData = {
+                  path: trimmed,
+                  url: `${cleanHost}/gradio_api/file=${trimmed}`,
+                  orig_name: 'input_image.png',
+                  size: blob.size,
+                  mime_type: mime,
+                  meta: { _type: 'gradio.FileData' }
+                };
+                break;
+              }
+            }
+
+            if (parsed) {
+              if (Array.isArray(parsed) && parsed.length > 0) {
+                const firstItem = parsed[0];
+                if (typeof firstItem === 'string') {
+                  uploadedFileData = {
+                    path: firstItem,
+                    url: firstItem.startsWith('http') ? firstItem : `${cleanHost}/gradio_api/file=${firstItem}`,
+                    orig_name: 'input_image.png',
+                    size: blob.size,
+                    mime_type: mime,
+                    meta: { _type: 'gradio.FileData' }
+                  };
+                  break;
+                } else if (firstItem && typeof firstItem === 'object') {
+                  const pPath = firstItem.path || firstItem.name || '';
+                  uploadedFileData = {
+                    path: pPath,
+                    url: firstItem.url || (pPath ? `${cleanHost}/gradio_api/file=${pPath}` : dataUrl),
+                    orig_name: firstItem.orig_name || 'input_image.png',
+                    size: firstItem.size || blob.size,
+                    mime_type: firstItem.mime_type || mime,
+                    meta: firstItem.meta || { _type: 'gradio.FileData' }
+                  };
+                  break;
+                }
+              } else if (typeof parsed === 'string') {
+                uploadedFileData = {
+                  path: parsed,
+                  url: `${cleanHost}/gradio_api/file=${parsed}`,
+                  orig_name: 'input_image.png',
+                  size: blob.size,
+                  mime_type: mime,
+                  meta: { _type: 'gradio.FileData' }
+                };
+                break;
+              } else if (typeof parsed === 'object') {
+                const pPath = parsed.path || parsed.name || '';
+                uploadedFileData = {
+                  path: pPath,
+                  url: parsed.url || (pPath ? `${cleanHost}/gradio_api/file=${pPath}` : dataUrl),
+                  orig_name: parsed.orig_name || 'input_image.png',
+                  size: parsed.size || blob.size,
+                  mime_type: parsed.mime_type || mime,
+                  meta: parsed.meta || { _type: 'gradio.FileData' }
+                };
+                break;
+              }
+            }
+          } else if (resp) {
+            const errText = await resp.text().catch(() => '');
+            if (errText.toLowerCase().includes('sleeping') || errText.toLowerCase().includes('building')) {
+              throw new Error("Space Hugging Face sedang tidur (Sleeping). Silakan buka URL Space di browser untuk membangunkannya.");
+            }
+            lastErrorMsg = `HTTP ${resp.status} ${resp.statusText}${errText ? `: ${errText.slice(0, 150)}` : ''}`;
           }
-        } else if (resp) {
-          const errText = await resp.text().catch(() => '');
-          lastErrorMsg = `HTTP ${resp.status} ${resp.statusText}${errText ? `: ${errText.slice(0, 150)}` : ''}`;
+        } catch (epErr: any) {
+          lastErrorMsg = epErr?.message || String(epErr);
+          if (lastErrorMsg.includes('tidur') || lastErrorMsg.includes('Sleeping')) {
+            throw epErr;
+          }
         }
-      } catch (epErr: any) {
-        lastErrorMsg = epErr?.message || String(epErr);
       }
     }
 
-    throw new Error(`Gagal mengunggah foto ke Space (${cleanHost}): ${lastErrorMsg || 'Endpoint upload menolak koneksi'}`);
+    // Jika endpoint upload gagal (misal Space menolak endpoint upload terpisah),
+    // FALLBACK CERDAS: gunakan dataUrl (Base64) langsung sebagai FileData Gradio object atau string,
+    // karena banyak Space Gradio menerima Base64 data URL langsung pada input komponen image.
+    if (!uploadedFileData) {
+      console.warn("[HF-Upload] Endpoint upload terpisah tidak merespons, menggunakan fallback langsung (Base64 Data URL).");
+      uploadedFileData = {
+        path: dataUrl,
+        url: dataUrl,
+        orig_name: 'input_image.png',
+        size: blob.size,
+        mime_type: mime,
+        meta: { _type: 'gradio.FileData' }
+      };
+    }
+
+    return uploadedFileData;
   } catch (err: any) {
     console.error("[HF-Upload] Upload error:", err);
     throw err;
   }
 };
-
-/**
- * Ekstraksi gambar dari output Gradio
- */
 const extractImageFromGradioOutput = async (data: any, spaceHost: string, token?: string): Promise<string> => {
   if (!data) throw new Error("Output dari HF Space kosong.");
 
